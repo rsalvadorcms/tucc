@@ -247,3 +247,171 @@ with tab2:
     if not rooms:
         st.warning("No physical boardrooms or meeting layout spaces are registered yet.")
     else:
+        room_options = {f"{r['room_name']} (Room {r['room_number']} - Capacity: {r['capacity']})": r['room_number'] for r in rooms}
+        selected_room_label = st.selectbox("Choose Target Room Venue", list(room_options.keys()))
+        selected_room_num = room_options[selected_room_label]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            book_date = st.date_input("Reservation Date", value=datetime.today(), key="bk_date")
+            b_start = st.time_input("Reservation Start Time", value=time(9, 0), key="bk_start")
+            b_end = st.time_input("Reservation End Time", value=time(10, 0), key="bk_end")
+        
+        with col2:
+            recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
+            max_rec_end = datetime.today() + timedelta(days=180) # 6 Months Lockout Constraint Rule
+            recurrence_end = st.date_input("Recurrence End Horizon Target (Max 6 Months Limit)", value=book_date + timedelta(days=7))
+            
+            if recurrence_end > max_rec_end:
+                st.error("⚠️ Rule Restriction Failure: System parameters block automated room recurrence from exceeding a maximum limit of 6 months.")
+                st.stop()
+
+        if st.button("Confirm Room Block Assignment"):
+            target_dates = [book_date]
+            if recurrence != "None":
+                current_date = book_date
+                while True:
+                    if recurrence == "Daily":
+                        current_date += timedelta(days=1)
+                    elif recurrence == "Weekly":
+                        current_date += timedelta(weeks=1)
+                    elif recurrence == "Monthly":
+                        current_date += timedelta(days=30)
+                    
+                    if current_date <= recurrence_end:
+                        target_dates.append(current_date)
+                    else:
+                        break
+            
+            # Double-booking Validation Engine Logic Checks
+            conflict_detected = False
+            conn = get_db_connection()
+            
+            for t_date in target_dates:
+                t_date_str = t_date.strftime("%Y-%m-%d")
+                conflicts = conn.execute('''
+                    SELECT * FROM room_bookings 
+                    WHERE room_number = ? 
+                    AND booking_date = ? 
+                    AND NOT (start_time >= ? OR end_time <= ?)
+                ''', (selected_room_num, t_date_str, b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchall()
+                
+                if conflicts:
+                    st.error(f"❌ Schedule Collision Error! Another team has already reserved Room {selected_room_num} on {t_date_str} during those hours.")
+                    conflict_detected = True
+                    break
+            
+            if not conflict_detected:
+                for t_date in target_dates:
+                    conn.execute('''
+                        INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (selected_room_num, st.session_state.username, t_date.strftime("%Y-%m-%d"), 
+                          b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
+                
+                user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
+                conn.commit()
+                st.success(f"🎉 Room assignment established successfully across {len(target_dates)} calendar intervals!")
+                if user_info and user_info['email_recipients']:
+                    st.info(f"📧 Notification logs dispatched to: **{user_info['email_recipients']}**")
+            conn.close()
+
+    # Active Calendar Data Display Matrix & Native Excel Export Button
+    st.subheader("📊 Master Room Allocation Schedules")
+    conn = get_db_connection()
+    bookings_df = pd.read_sql_query('''
+        SELECT b.id, r.room_name, b.room_number, b.booked_by, b.booking_date, b.start_time, b.end_time, b.is_recurring 
+        FROM room_bookings b 
+        JOIN meeting_rooms r ON b.room_number = r.room_number
+    ''', conn)
+    conn.close()
+    
+    if not bookings_df.empty:
+        st.dataframe(bookings_df, use_container_width=True)
+        
+        # 📊 NATIVE EXCEL DOWNLOAD ENGINE (.xlsx)
+        buffer_bk = io.BytesIO()
+        with pd.ExcelWriter(buffer_bk, engine='openpyxl') as writer:
+            bookings_df.to_excel(writer, index=False, sheet_name="Schedules Report")
+        excel_data_bk = buffer_bk.getvalue()
+        
+        st.download_button(
+            label="📥 Download Calendar Agenda as Excel (.xlsx)",
+            data=excel_data_bk,
+            file_name=f"Meeting_Room_Schedules_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        if st.session_state.role == "Admin":
+            del_bk_id = st.number_input("Enter Booking ID to remove:", min_value=1, step=1, key="del_bk")
+            if st.button("Cancel Selected Booking Line Assignment", key="btn_del_bk"):
+                conn = get_db_connection()
+                conn.execute("DELETE FROM room_bookings WHERE id=?", (del_bk_id,))
+                conn.commit()
+                conn.close()
+                st.success(f"Booking ID record {del_bk_id} cleared from tracking systems.")
+                st.rerun()
+
+
+# --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
+with tab3:
+    if st.session_state.role != "Admin":
+        st.error("🛡️ Restricted Access Control: You lack administrative clearing profiles to view these configuration matrices.")
+    else:
+        st.header("Admin Control Dashboard Engine")
+        
+        # User Configuration Form Profiles Panel
+        st.subheader("👤 Profile Credentials Manager")
+        with st.form("user_reg_form"):
+            new_user = st.text_input("New Username Account String")
+            new_pass = st.text_input("Security Access Password", type="password")
+            new_role = st.selectbox("Authorization Cleared Level", ["User", "Admin"])
+            new_email = st.text_input("Predetermined Routing Email Notifications (Comma separated)")
+            submit_user = st.form_submit_button("Register Account Credentials")
+            
+            if submit_user and new_user and new_pass:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", (new_user, new_pass, new_role, new_email))
+                    conn.commit()
+                    st.success(f"User account credential stack for '{new_user}' successfully committed.")
+                except sqlite3.IntegrityError:
+                    st.error("System Error: That profile handle identifier string is already cataloged.")
+                conn.close()
+                
+        # Register New Physical Meeting Rooms Structure Layout
+        st.subheader("🏢 Provision New Corporate Meeting Workspace")
+        with st.form("room_reg_form"):
+            r_num = st.text_input("Unique Room Key / Index Number")
+            r_name = st.text_input("Descriptive Room Label")
+            r_cap = st.number_input("Maximum Structural Seat Occupancy Limit", min_value=1, value=10)
+            r_loc = st.text_input("Facility Geography Context (e.g. 3rd Floor Annex, West Wing)")
+            submit_room = st.form_submit_button("Provision Asset into Records")
+            
+            if submit_room and r_num and r_name:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT INTO meeting_rooms VALUES (?, ?, ?, ?)", (r_num, r_name, int(r_cap), r_loc))
+                    conn.commit()
+                    st.success(f"Physical structural layout resource indices cataloged successfully for '{r_name}'.")
+                except sqlite3.IntegrityError:
+                    st.error("System Error: This location entry code structure conflicts with another workspace record.")
+                conn.close()
+                st.rerun()
+
+        # Calendar Holiday Operational Boundaries Tracking Form
+        st.subheader("📅 Adjust Corporate Operational Holiday Parameters")
+        with st.form("holiday_reg_form"):
+            h_date = st.date_input("Target Lockout Holiday Calendar Date", value=datetime.today())
+            h_desc = st.text_input("Holiday Designation Scope Description")
+            submit_holiday = st.form_submit_button("Store Holiday Rule Constraint")
+            
+            if submit_holiday:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT INTO holidays VALUES (?, ?)", (h_date.strftime("%Y-%m-%d"), h_desc))
+                    conn.commit()
+                    st.success(f"Holiday calendar constraints configuration committed successfully for {h_date.strftime('%Y-%m-%d')}.")
+                except sqlite3.IntegrityError:
+                    st.error("System Error: This date profile rule assignment already exists.")
+                conn.close()
