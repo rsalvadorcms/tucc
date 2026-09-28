@@ -39,6 +39,15 @@ def init_db():
         )
     ''')
     
+    # Create Drivers Fleet Database
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS fleet_drivers (
+            driver_name TEXT PRIMARY KEY,
+            driver_mobile TEXT,
+            plate_number TEXT
+        )
+    ''')
+    
     # Create Overtime & Transport Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
@@ -93,6 +102,13 @@ def init_db():
     if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
+        
+    # Seed some sample fleet drivers if completely empty
+    cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
+    if cursor.fetchone() == 0:
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628123456789', 'BP 1234 XX')")
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628987654321', 'BP 5678 YY')")
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('Robert Johnson', '+628555555555', 'BP 9012 ZZ')")
         
     conn.commit()
     conn.close()
@@ -154,6 +170,11 @@ with tab1:
     conn = get_db_connection()
     holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
     holiday_list = holidays_df['holiday_date'].tolist()
+    
+    # Load driver profiles for autocomplete
+    drivers_data = conn.execute("SELECT * FROM fleet_drivers").fetchall()
+    driver_map = {d['driver_name']: {"mobile": d['driver_mobile'], "plate": d['plate_number']} for d in drivers_data}
+    driver_options = ["-- Select Driver --"] + list(driver_map.keys())
     conn.close()
     
     col1, col2 = st.columns(2)
@@ -163,7 +184,7 @@ with tab1:
         is_sunday = ot_date.weekday() == 6
         is_holiday = date_str in holiday_list
         
-        # Updated Rule Engine: Dynamic defaults for BOTH Start and End Times
+        # Rule Engine: Dynamic defaults for BOTH Start and End Times
         if is_sunday or is_holiday:
             default_start = time(7, 0)
             default_end = time(15, 0)
@@ -179,9 +200,22 @@ with tab1:
         
     with col2:
         if needs_transport:
-            driver_name = st.text_input("Driver Name", value="John Doe")
-            driver_mobile = st.text_input("Driver Mobile Phone Number")
-            plate_number = st.text_input("Car Plate Registration Number")
+            # User level driver autocomplete
+            selected_driver = st.selectbox("Assign Fleet Driver Profile", driver_options, key="user_driver_select")
+            
+            if selected_driver != "-- Select Driver --":
+                d_name = selected_driver
+                d_mobile = driver_map[selected_driver]["mobile"]
+                d_plate = driver_map[selected_driver]["plate"]
+            else:
+                d_name = ""
+                d_mobile = ""
+                d_plate = ""
+                
+            driver_name = st.text_input("Driver Name", value=d_name)
+            driver_mobile = st.text_input("Driver Mobile Phone Number", value=d_mobile)
+            plate_number = st.text_input("Car Plate Registration Number", value=d_plate)
+            
             route_type = st.selectbox("Route Assignment Context", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"])
             origin = st.text_input("Origin Address", value="Main Corporate Office")
             destination = st.text_input("Target Destination")
@@ -234,8 +268,104 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
+        # ==============================================================================
+        # 🚗 ADMIN ADVANCED OVERTIME EDITOR & FLEET ASSIGNMENT PANEL
+        # ==============================================================================
         if st.session_state.role == "Admin":
-            delete_id = st.number_input("Enter Record Row ID number to purge:", min_value=1, step=1, key="del_ot")
+            st.markdown("---")
+            st.subheader("✏️ Edit Overtime Request & Fleet Assignment (Admin Only)")
+            
+            # Form dropdown to pick an ID from active list
+            available_ids = ot_df['id'].tolist()
+            selected_id = st.selectbox("Select Overtime Record ID to modify or assign transport:", available_ids)
+            
+            if selected_id:
+                # Load current database values for the chosen request
+                conn = get_db_connection()
+                current_row = conn.execute("SELECT * FROM overtime_requests WHERE id = ?", (selected_id,)).fetchone()
+                conn.close()
+                
+                if current_row:
+                    st.info(f"Modifying request submitted by personnel: **{current_row['username']}** for date **{current_row['ot_date']}**")
+                    
+                    # Create an isolated section to choose driver first, or default to current row's driver
+                    current_driver = current_row['driver_name'] or "-- Select Driver --"
+                    if current_driver not in driver_options:
+                        driver_options.append(current_driver)
+                    
+                    admin_selected_driver = st.selectbox(
+                        "Quick Auto-Fill Driver Details from Fleet Inventory", 
+                        driver_options, 
+                        index=driver_options.index(current_driver) if current_driver in driver_options else 0,
+                        key=f"admin_driver_selector_{selected_id}"
+                    )
+                    
+                    # Determine current editable strings based on selector changes
+                    if admin_selected_driver != "-- Select Driver --" and admin_selected_driver in driver_map:
+                        init_driver = admin_selected_driver
+                        init_mobile = driver_map[admin_selected_driver]["mobile"]
+                        init_plate = driver_map[admin_selected_driver]["plate"]
+                    else:
+                        init_driver = current_row['driver_name'] or ""
+                        init_mobile = current_row['driver_mobile'] or ""
+                        init_plate = current_row['plate_number'] or ""
+                    
+                    with st.form(f"admin_edit_form_{selected_id}"):
+                        edit_col1, edit_col2 = st.columns(2)
+                        
+                        with edit_col1:
+                            try:
+                                parsed_date = datetime.strptime(current_row['ot_date'], "%Y-%m-%d").date()
+                            except:
+                                parsed_date = date.today()
+                                
+                            edit_date = st.date_input("Overtime Date", value=parsed_date)
+                            edit_start = st.text_input("OT Start Time (HH:MM)", value=current_row['start_time'])
+                            edit_end = st.text_input("OT End Time (HH:MM)", value=current_row['end_time'])
+                            edit_needs_trans = st.checkbox("Require Transportation Assignment?", value=bool(current_row['needs_transport']))
+                            
+                            st.markdown("**Core Logistical Data Details:**")
+                            edit_origin = st.text_input("Origin Address", value=current_row['origin'] or "Main Corporate Office")
+                            edit_destination = st.text_input("Target Destination", value=current_row['destination'] or "")
+
+                        with edit_col2:
+                            st.markdown("**Fleet & Vehicle Driver Assignment Desk (Auto-filled from above selection):**")
+                            edit_driver = st.text_input("Assigned Driver Name", value=init_driver)
+                            edit_mobile = st.text_input("Driver Mobile Phone Number", value=init_mobile)
+                            edit_plate = st.text_input("Car Plate Registration Number", value=init_plate)
+                            
+                            route_options = ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"]
+                            try:
+                                default_idx = route_options.index(current_row['route_type'])
+                            except:
+                                default_idx = 0
+                            edit_route = st.selectbox("Route Assignment Context", route_options, index=default_idx)
+                            
+                            edit_dep = st.text_input("Departure Time (HH:MM)", value=current_row['departure_time'] or "")
+                            edit_ret = st.text_input("Return Time (HH:MM)", value=current_row['return_time'] or "")
+                        
+                        submit_changes = st.form_submit_button("Save Changes & Assign Fleet")
+                        
+                        if submit_changes:
+                            conn = get_db_connection()
+                            conn.execute('''
+                                UPDATE overtime_requests 
+                                SET ot_date = ?, start_time = ?, end_time = ?, needs_transport = ?,
+                                    driver_name = ?, driver_mobile = ?, plate_number = ?, route_type = ?,
+                                    origin = ?, destination = ?, departure_time = ?, return_time = ?
+                                WHERE id = ?
+                            ''', (edit_date.strftime("%Y-%m-%d"), edit_start, edit_end, 1 if edit_needs_trans else 0,
+                                  edit_driver, edit_mobile, edit_plate, edit_route,
+                                  edit_origin, edit_destination, edit_dep, edit_ret, selected_id))
+                            conn.commit()
+                            conn.close()
+                            
+                            st.success(f"🎉 Overtime Request ID {selected_id} updated successfully!")
+                            st.rerun()
+            
+            st.markdown("---")
+            st.subheader("🗑️ Delete Overtime Request (Admin Only)")
+            delete_id = st.number_input("Enter Record Row ID number to completely delete:", min_value=1, step=1, key="del_ot")
             if st.button("Delete Selected OT Record", key="btn_del_ot"):
                 conn = get_db_connection()
                 conn.execute("DELETE FROM overtime_requests WHERE id=?", (delete_id,))
@@ -271,7 +401,6 @@ with tab2:
         with col2:
             recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
             
-            # Fix comparative data type exceptions
             max_rec_end = date.today() + timedelta(days=180) 
             recurrence_end = st.date_input("Recurrence End Horizon Target (Max 6 Months Limit)", value=book_date + timedelta(days=7))
             
@@ -393,6 +522,25 @@ with tab3:
                 except sqlite3.IntegrityError:
                     st.error("System Error: That profile handle identifier string is already cataloged.")
                 conn.close()
+                
+        # Register New Corporate Fleet Drivers
+        st.subheader("🚗 Register Corporate Fleet Driver Profile")
+        with st.form("driver_reg_form"):
+            drv_name = st.text_input("Driver Full Name")
+            drv_mobile = st.text_input("Driver Contact Number (Mobile Line)")
+            drv_plate = st.text_input("Vehicle Plate Registration Number")
+            submit_driver = st.form_submit_button("Provision Driver into Fleet Inventory")
+            
+            if submit_driver and drv_name:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT OR REPLACE INTO fleet_drivers VALUES (?, ?, ?)", (drv_name, drv_mobile, drv_plate))
+                    conn.commit()
+                    st.success(f"Fleet registry updated successfully for driver '{drv_name}'.")
+                except Exception as e:
+                    st.error(f"System Error: {str(e)}")
+                conn.close()
+                st.rerun()
                 
         # Register New Physical Meeting Rooms Structure Layout
         st.subheader("🏢 Provision New Corporate Meeting Workspace")
