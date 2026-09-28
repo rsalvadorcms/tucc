@@ -1,17 +1,44 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time
+from sqlalchemy import create_engine
 
 # Page Configuration
 st.set_page_config(page_title="Office Management Hub", layout="wide")
 
-# Establish Streamlit Database Connection (Uses secrets under [connections.postgresql])
+# 1. Fetch credentials as raw text fragments from your secrets vault
 try:
-    # Explicitly pass the connection URL keyword argument directly from secrets
-    conn = st.connection("postgresql", type="sql", url=st.secrets["SUPABASE_URL"])
-except Exception as e:
-    st.error("Database connection configuration missing or invalid. Please check your Streamlit Secrets.")
+    db_host = st.secrets["DB_HOST"]
+    db_port = st.secrets["DB_PORT"]
+    db_name = st.secrets["DB_NAME"]
+    db_user = st.secrets["DB_USER"]
+    db_pass = st.secrets["DB_PASS"]
+except KeyError:
+    st.error("⚠️ Streamlit Secrets are not configured properly! Check your Streamlit Cloud Settings.")
     st.stop()
+
+# 2. Build a raw connection string without relying on st.connection's validator
+# This uses standard URL formatting logic to bypass the native Streamlit validation loop
+DB_URL = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+
+# 3. Create a clean SQLAlchemy driver engine 
+engine = create_engine(DB_URL, pool_pre_ping=True)
+
+# 4. Helper container to match the rest of your app's execution architecture
+class CloudConnection:
+    def query(self, sql_query, ttl=0):
+        import pandas as pd
+        with engine.connect() as connection:
+            return pd.read_sql_query(sql_query, connection)
+            
+    @property
+    def session(self):
+        from sqlalchemy.orm import sessionmaker
+        Session = sessionmaker(bind=engine)
+        return Session()
+
+# Reassign the active connection hook cleanly 
+conn = CloudConnection()
 
 # Initialize Database Schema
 def init_db():
