@@ -7,7 +7,8 @@ st.set_page_config(page_title="Office Management Hub", layout="wide")
 
 # Establish Streamlit Database Connection (Uses secrets under [connections.postgresql])
 try:
-    conn = st.connection("postgresql", type="sql")
+    # Explicitly pass the connection URL keyword argument directly from secrets
+    conn = st.connection("postgresql", type="sql", url=st.secrets["SUPABASE_URL"])
 except Exception as e:
     st.error("Database connection configuration missing or invalid. Please check your Streamlit Secrets.")
     st.stop()
