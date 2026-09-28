@@ -204,9 +204,12 @@ with tab1:
 
     # Display Logs and Native Excel Export Interface
     st.subheader("📋 Overtime Submission History Log")
+    
     conn = get_db_connection()
-    query = "SELECT * FROM overtime_requests" if st.session_state.role == "Admin" else f"SELECT * FROM overtime_requests WHERE username='{st.session_state.username}'"
-    ot_df = pd.read_sql_query(query, conn)
+    if st.session_state.role == "Admin":
+        ot_df = pd.read_sql_query("SELECT * FROM overtime_requests", conn)
+    else:
+        ot_df = pd.read_sql_query("SELECT * FROM overtime_requests WHERE username = ?", conn, params=[st.session_state.username])
     conn.close()
     
     if not ot_df.empty:
@@ -234,6 +237,8 @@ with tab1:
                 conn.close()
                 st.success(f"Log ID {delete_id} deleted successfully.")
                 st.rerun()
+    else:
+        st.info("No recorded overtime history logs found.")
 
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
@@ -351,6 +356,8 @@ with tab2:
                 conn.close()
                 st.success(f"Booking ID record {del_bk_id} cleared from tracking systems.")
                 st.rerun()
+    else:
+        st.info("No active meeting room allocations scheduled.")
 
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
