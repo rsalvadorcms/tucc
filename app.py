@@ -21,7 +21,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Create Users Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -31,7 +30,6 @@ def init_db():
         )
     ''')
     
-    # Create Holidays Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holidays (
             holiday_date TEXT PRIMARY KEY,
@@ -39,7 +37,6 @@ def init_db():
         )
     ''')
     
-    # Create Overtime & Transport Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +56,6 @@ def init_db():
         )
     ''')
     
-    # Create Meeting Rooms Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meeting_rooms (
             room_number TEXT PRIMARY KEY,
@@ -69,7 +65,6 @@ def init_db():
         )
     ''')
     
-    # Create Bookings Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS room_bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +78,6 @@ def init_db():
         )
     ''')
 
-    # Create Fleet Drivers Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -92,7 +86,6 @@ def init_db():
         )
     ''')
 
-    # Create Daily Transportation Groups Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,18 +96,15 @@ def init_db():
         )
     ''')
     
-    # Seed default Admin if not exists
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
         
-    # Seed some sample rooms if completely empty
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
 
-    # Seed sample drivers if empty
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
     if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333', 'B 1234 ABC')")
@@ -123,7 +113,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Start DB Structure
 init_db()
 
 # ==============================================================================
@@ -170,7 +159,6 @@ if st.sidebar.button("Logout Profile"):
 tabs = ["⏰ Overtime & Transport", "👥 Daily Transit Groups", "📅 Meeting Room Booking", "🛠️ System Administration"]
 tab1, tab1_b, tab2, tab3 = st.tabs(tabs)
 
-# --- TAB 1: OVERTIME & TRANSPORT ARRANGEMENTS ---
 with tab1:
     st.header("Request Overtime & Logistics Tracking")
     
@@ -220,8 +208,6 @@ with tab1:
             ret_time = st.time_input("Return Timeline Estimate", value=time(23, 0))
         else:
             driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time, ret_time = ["", "", "", "", "", "", "", ""]
-            if needs_transport and not drivers:
-                st.warning("⚠️ No drivers registered in the system yet. Please configure drivers in System Administration.")
 
     if st.button("Submit New Overtime Request"):
         conn = get_db_connection()
@@ -352,12 +338,40 @@ with tab1_b:
         else:
             st.info("No transportation groups have been created yet.")
 
-    st.subheader("📊 Active Daily Transit Matrix Log")
+    st.markdown("---")
+    st.subheader("📊 Filter & Export Daily Transit Groups per Date")
+    
+    filter_export_date = st.date_input("Select Date to Export to Excel", value=date.today(), key="filter_export_date")
+    filter_date_str = filter_export_date.strftime("%Y-%m-%d")
+    
     conn = get_db_connection()
-    transit_df = pd.read_sql_query("SELECT * FROM transit_groups", conn)
+    filtered_transit_df = pd.read_sql_query("SELECT * FROM transit_groups WHERE group_date = ?", conn, params=[filter_date_str])
+    all_transit_df = pd.read_sql_query("SELECT * FROM transit_groups", conn)
     conn.close()
-    if not transit_df.empty:
-        st.dataframe(transit_df, use_container_width=True)
+    
+    if not filtered_transit_df.empty:
+        st.markdown(f"Records found for **{filter_date_str}**:")
+        st.dataframe(filtered_transit_df, use_container_width=True)
+        
+        buffer_tg = io.BytesIO()
+        with pd.ExcelWriter(buffer_tg, engine='openpyxl') as writer:
+            filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit Groups {filter_date_str}")
+        excel_data_tg = buffer_tg.getvalue()
+        
+        st.download_button(
+            label=f"📥 Download {filter_date_str} Transit Groups as Excel (.xlsx)",
+            data=excel_data_tg,
+            file_name=f"Transit_Groups_{filter_date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="btn_dl_date_excel"
+        )
+    else:
+        st.info(f"No custom transportation groups scheduled for {filter_date_str} yet.")
+        
+    st.markdown("---")
+    st.markdown("**All Recorded Groups Log Matrix:**")
+    if not all_transit_df.empty:
+        st.dataframe(all_transit_df, use_container_width=True)
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
@@ -470,52 +484,33 @@ with tab3:
         st.header("Admin Control Dashboard Engine")
         
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables CRUD Explorer & Live Grid Editor (Admin Only)")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor (Admin Only)")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups"]
-        selected_table = st.selectbox("Choose Database Table to Manage Natively", table_options)
+        selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
         conn.close()
         
-        st.markdown(f"👉 **Double-click cells to Edit. Click the '+' icon at the bottom of the grid to Add new rows.**")
+        st.markdown("💡 *Double-click cells to Edit. Click '+' at the bottom of the grid to Add new rows.*")
         
-        # Upgraded to st.data_editor to easily handle add, update, append natively in UI
         edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_table}")
         
-        if st.button("💾 Save Grid Changes to Database", key=f"save_{selected_table}"):
+        if st.button(f"Save Grid Changes to Database ({selected_table})"):
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Wipe the target table completely and rewrite with the edited dataset frame to sync changes cleanly
             cursor.execute(f"DELETE FROM {selected_table}")
             
-            # Reinsert rows matching columns dynamically
-            columns = edited_df.columns.tolist()
-            placeholders = ", ".join(["?"] * len(columns))
-            query = f"INSERT INTO {selected_table} ({', '.join(columns)}) VALUES ({placeholders})"
-            
-            for index, row in edited_df.iterrows():
-                row_values = [None if pd.isna(val) else val for val in row.values]
-                cursor.execute(query, row_values)
+            for _, row in edited_df.iterrows():
+                columns = [k for k in row.keys() if row[k] is not None]
+                values = [row[k] for k in columns]
+                placeholders = ", ".join(["?"] * len(columns))
+                col_names = ", ".join(columns)
+                
+                cursor.execute(f"INSERT INTO {selected_table} ({col_names}) VALUES ({placeholders})", values)
                 
             conn.commit()
             conn.close()
-            st.success(f"🎉 Live modifications for `{selected_table}` successfully synchronized into the database!")
+            st.success(f"🎉 Changes synchronized with '{selected_table}' successfully!")
             st.rerun()
-            
-        st.markdown("---")
-        
-        col_adm1, col_adm2 = st.columns(2)
-        with col_adm1:
-            st.markdown(f"**Alternative Row Purge from `{selected_table}`**")
-            id_column_name = "username" if selected_table in ["users", "fleet_drivers"] else ("holiday_date" if selected_table == "holidays" else "room_number" if selected_table == "meeting_rooms" else "id")
-            target_row_key = st.text_input(f"Enter row lookup value to drop (Provide {id_column_name}):")
-            if st.button(f"Delete Row Row"):
-                if target_row_key:
-                    conn = get_db_connection()
-                    conn.execute(f"DELETE FROM {selected_table} WHERE {id_column_name} = ?", (target_row_key,))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"Row dropped.")
-                    st.rerun()
