@@ -470,64 +470,52 @@ with tab3:
         st.header("Admin Control Dashboard Engine")
         
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables CRUD Explorer (Admin Only)")
+        st.subheader("🗃️ Master Data Tables CRUD Explorer & Live Grid Editor (Admin Only)")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups"]
-        selected_table = st.selectbox("Choose Database Table to View & Manage", table_options)
+        selected_table = st.selectbox("Choose Database Table to Manage Natively", table_options)
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
         conn.close()
         
-        st.markdown(f"**Live Records inside `{selected_table}` table:**")
-        st.dataframe(table_df, use_container_width=True)
+        st.markdown(f"👉 **Double-click cells to Edit. Click the '+' icon at the bottom of the grid to Add new rows.**")
+        
+        # Upgraded to st.data_editor to easily handle add, update, append natively in UI
+        edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_table}")
+        
+        if st.button("💾 Save Grid Changes to Database", key=f"save_{selected_table}"):
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Wipe the target table completely and rewrite with the edited dataset frame to sync changes cleanly
+            cursor.execute(f"DELETE FROM {selected_table}")
+            
+            # Reinsert rows matching columns dynamically
+            columns = edited_df.columns.tolist()
+            placeholders = ", ".join(["?"] * len(columns))
+            query = f"INSERT INTO {selected_table} ({', '.join(columns)}) VALUES ({placeholders})"
+            
+            for index, row in edited_df.iterrows():
+                row_values = [None if pd.isna(val) else val for val in row.values]
+                cursor.execute(query, row_values)
+                
+            conn.commit()
+            conn.close()
+            st.success(f"🎉 Live modifications for `{selected_table}` successfully synchronized into the database!")
+            st.rerun()
+            
+        st.markdown("---")
         
         col_adm1, col_adm2 = st.columns(2)
         with col_adm1:
-            st.markdown(f"**Purge Rows from `{selected_table}`**")
+            st.markdown(f"**Alternative Row Purge from `{selected_table}`**")
             id_column_name = "username" if selected_table in ["users", "fleet_drivers"] else ("holiday_date" if selected_table == "holidays" else "room_number" if selected_table == "meeting_rooms" else "id")
-            
-            target_row_key = st.text_input(f"Enter Key value to delete (Provide matching {id_column_name}):")
-            if st.button(f"Delete Row from {selected_table}"):
+            target_row_key = st.text_input(f"Enter row lookup value to drop (Provide {id_column_name}):")
+            if st.button(f"Delete Row Row"):
                 if target_row_key:
                     conn = get_db_connection()
                     conn.execute(f"DELETE FROM {selected_table} WHERE {id_column_name} = ?", (target_row_key,))
                     conn.commit()
                     conn.close()
-                    st.success(f"Row containing key reference '{target_row_key}' successfully dropped.")
+                    st.success(f"Row dropped.")
                     st.rerun()
-
-        st.markdown("---")
-        st.subheader("👤 Profile Credentials Manager")
-        with st.form("user_reg_form"):
-            new_user = st.text_input("New Username Account String")
-            new_pass = st.text_input("Security Access Password", type="password")
-            new_role = st.selectbox("Authorization Cleared Level", ["User", "Admin"])
-            new_email = st.text_input("Predetermined Routing Email Notifications (Comma separated)")
-            submit_user = st.form_submit_button("Register Account Credentials")
-            
-            if submit_user and new_user and new_pass:
-                conn = get_db_connection()
-                try:
-                    conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", (new_user, new_pass, new_role, new_email))
-                    conn.commit()
-                    st.success(f"User account credential stack for '{new_user}' successfully committed.")
-                except sqlite3.IntegrityError:
-                    st.error("System Error: That profile handle identifier string is already cataloged.")
-                conn.close()
-                
-        st.subheader("🚗 Register Corporate Fleet Driver Asset")
-        with st.form("driver_reg_form"):
-            dr_name = st.text_input("Driver Full Name")
-            dr_mob = st.text_input("Mobile Line Number")
-            dr_plat = st.text_input("Car Plate Serial Number")
-            submit_driver = st.form_submit_button("Provision Driver Mapping")
-            
-            if submit_driver and dr_name:
-                conn = get_db_connection()
-                try:
-                    conn.execute("INSERT INTO fleet_drivers VALUES (?, ?, ?)", (dr_name, dr_mob, dr_plat))
-                    conn.commit()
-                    st.success(f"Driver profile '{dr_name}' added to backend repository matrices.")
-                except sqlite3.IntegrityError:
-                    st.error("This driver name identifier is already logged.")
-                conn.close()
