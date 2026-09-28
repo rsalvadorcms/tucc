@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import io
-from datetime import datetime, timedelta, time
+from datetime import datetime, date, timedelta, time
 
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
@@ -158,17 +158,23 @@ with tab1:
     
     col1, col2 = st.columns(2)
     with col1:
-        ot_date = st.date_input("Select Target Date", value=datetime.today())
+        ot_date = st.date_input("Select Target Date", value=date.today())
         date_str = ot_date.strftime("%Y-%m-%d")
         is_sunday = ot_date.weekday() == 6
         is_holiday = date_str in holiday_list
         
-        # Core Requirement Rule Engine Implementation
-        default_start = time(7, 0) if (is_sunday or is_holiday) else time(17, 30)
-        st.caption(f"ℹ️ Automatic Rule Applied: **{'Sunday/Holiday (07:00)' if (is_sunday or is_holiday) else 'Weekday/Saturday (17:30)'}** baseline.")
+        # Updated Rule Engine: Dynamic defaults for BOTH Start and End Times
+        if is_sunday or is_holiday:
+            default_start = time(7, 0)
+            default_end = time(15, 0)
+            st.caption("ℹ️ Automatic Rule Applied: **Sunday/Holiday (07:00 - 15:00)** baseline.")
+        else:
+            default_start = time(17, 30)
+            default_end = time(19, 0)
+            st.caption("ℹ️ Automatic Rule Applied: **Weekday/Saturday (17:30 - 19:00)** baseline.")
         
         start_time = st.time_input("OT Start Time", value=default_start)
-        end_time = st.time_input("OT End Time", value=time(21, 0))
+        end_time = st.time_input("OT End Time", value=default_end)
         needs_transport = st.checkbox("Require Transportation Logistics?")
         
     with col2:
@@ -258,13 +264,15 @@ with tab2:
         
         col1, col2 = st.columns(2)
         with col1:
-            book_date = st.date_input("Reservation Date", value=datetime.today(), key="bk_date")
+            book_date = st.date_input("Reservation Date", value=date.today(), key="bk_date")
             b_start = st.time_input("Reservation Start Time", value=time(9, 0), key="bk_start")
             b_end = st.time_input("Reservation End Time", value=time(10, 0), key="bk_end")
         
         with col2:
             recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
-            max_rec_end = datetime.today() + timedelta(days=180) # 6 Months Lockout Constraint Rule
+            
+            # Fix comparative data type exceptions
+            max_rec_end = date.today() + timedelta(days=180) 
             recurrence_end = st.date_input("Recurrence End Horizon Target (Max 6 Months Limit)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
@@ -409,7 +417,7 @@ with tab3:
         # Calendar Holiday Operational Boundaries Tracking Form
         st.subheader("📅 Adjust Corporate Operational Holiday Parameters")
         with st.form("holiday_reg_form"):
-            h_date = st.date_input("Target Lockout Holiday Calendar Date", value=datetime.today())
+            h_date = st.date_input("Target Lockout Holiday Calendar Date", value=date.today())
             h_desc = st.text_input("Holiday Designation Scope Description")
             submit_holiday = st.form_submit_button("Store Holiday Rule Constraint")
             
