@@ -21,7 +21,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Create Users Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -31,7 +30,6 @@ def init_db():
         )
     ''')
     
-    # Create Holidays Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holidays (
             holiday_date TEXT PRIMARY KEY,
@@ -39,7 +37,6 @@ def init_db():
         )
     ''')
     
-    # Create Overtime & Transport Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +56,6 @@ def init_db():
         )
     ''')
     
-    # Create Meeting Rooms Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meeting_rooms (
             room_number TEXT PRIMARY KEY,
@@ -69,7 +65,6 @@ def init_db():
         )
     ''')
     
-    # Create Bookings Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS room_bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +78,6 @@ def init_db():
         )
     ''')
 
-    # Create Fleet Drivers Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -92,31 +86,27 @@ def init_db():
         )
     ''')
 
-    # Create Daily Transportation Groups Table with ETD 1 and ETD 2
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             group_date TEXT,
             driver_name TEXT,
             plate_number TEXT,
+            passengers TEXT,
             etd_1 TEXT,
-            etd_2 TEXT,
-            passengers TEXT
+            etd_2 TEXT
         )
     ''')
     
-    # Seed default Admin if not exists
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
         
-    # Seed some sample rooms if completely empty
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
 
-    # Seed sample drivers if empty
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
     if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333', 'B 1234 ABC')")
@@ -125,9 +115,24 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Start DB Structure
 init_db()
 
+# Ensure schema handles migration for etd fields
+def run_migrations():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT etd_1 FROM transit_groups LIMIT 1")
+    except sqlite3.OperationalError:
+        try:
+            cursor.execute("ALTER TABLE transit_groups ADD COLUMN etd_1 TEXT DEFAULT '05:45'")
+            cursor.execute("ALTER TABLE transit_groups ADD COLUMN etd_2 TEXT DEFAULT '17:30'")
+            conn.commit()
+        except Exception:
+            pass
+    conn.close()
+
+run_migrations()
 
 # ==============================================================================
 # 🔐 2. AUTHENTICATION USER INTERFACE
@@ -159,7 +164,6 @@ if not st.session_state.logged_in:
                 st.error("Invalid username or password configuration.")
     st.stop()
 
-
 # ==============================================================================
 # 🗂️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
@@ -174,8 +178,6 @@ if st.sidebar.button("Logout Profile"):
 tabs = ["⏰ Overtime & Transport", "👥 Daily Transit Groups", "📅 Meeting Room Booking", "🛠️ System Administration"]
 tab1, tab1_b, tab2, tab3 = st.tabs(tabs)
 
-
-# --- TAB 1: OVERTIME & TRANSPORT ARRANGEMENTS ---
 with tab1:
     st.header("Request Overtime & Logistics Tracking")
     
@@ -225,8 +227,6 @@ with tab1:
             ret_time = st.time_input("Return Timeline Estimate", value=time(23, 0))
         else:
             driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time, ret_time = ["", "", "", "", "", "", "", ""]
-            if needs_transport and not drivers:
-                st.warning("⚠️ No drivers registered in the system yet. Please configure drivers in System Administration.")
 
     if st.button("Submit New Overtime Request"):
         conn = get_db_connection()
@@ -269,7 +269,6 @@ with tab1:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-
 # --- TAB 1B: DAILY TRANSIT GROUPS DESK ---
 with tab1_b:
     st.header("👥 Daily Transportation Grouping & Transfers Desk")
@@ -295,9 +294,9 @@ with tab1_b:
             
             st.text(f"Automated Car Plate: {tg_d_info['plate_number']}")
             
-            # Editable ETD 1 and ETD 2 fields with defaults
-            etd_1_val = st.text_input("Departure Time 1 (ETD 1)", value="05:45")
-            etd_2_val = st.text_input("Departure Time 2 (ETD 2)", value="17:30")
+            # Form field parameters for editable ETD entries
+            create_etd_1 = st.text_input("ETD 1", value="05:45")
+            create_etd_2 = st.text_input("ETD 2", value="17:30")
             
             passenger_input = st.text_area("Passengers List (Separate names with commas)", placeholder="John, Alice, Bob")
             
@@ -305,9 +304,9 @@ with tab1_b:
                 if passenger_input.strip():
                     conn = get_db_connection()
                     conn.execute('''
-                        INSERT INTO transit_groups (group_date, driver_name, plate_number, etd_1, etd_2, passengers)
+                        INSERT INTO transit_groups (group_date, driver_name, plate_number, passengers, etd_1, etd_2)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (tg_date_str, selected_tg_driver, tg_d_info['plate_number'], etd_1_val.strip(), etd_2_val.strip(), passenger_input.strip()))
+                    ''', (tg_date_str, selected_tg_driver, tg_d_info['plate_number'], passenger_input.strip(), create_etd_1, create_etd_2))
                     conn.commit()
                     conn.close()
                     st.success("🎉 Transportation group created successfully.")
@@ -335,8 +334,14 @@ with tab1_b:
             
             if selected_group:
                 edit_passengers = st.text_area("Modify Passenger List (Comma separated)", value=selected_group['passengers'])
-                edit_etd_1 = st.text_input("Modify ETD 1", value=selected_group['etd_1'])
-                edit_etd_2 = st.text_input("Modify ETD 2", value=selected_group['etd_2'])
+                
+                # Dynamic safe extraction checks for etd parameters preventing dictionary map crashes
+                current_keys = dict(selected_group).keys()
+                val_etd1 = selected_group['etd_1'] if 'etd_1' in current_keys else '05:45'
+                val_etd2 = selected_group['etd_2'] if 'etd_2' in current_keys else '17:30'
+                
+                edit_etd_1 = st.text_input("Modify ETD 1", value=val_etd1)
+                edit_etd_2 = st.text_input("Modify ETD 2", value=val_etd2)
                 
                 st.markdown("**Transfer Group Assignment to Another Driver/Car:**")
                 edit_d_options = [d['driver_name'] for d in drivers_edit_list]
@@ -357,7 +362,7 @@ with tab1_b:
                         UPDATE transit_groups 
                         SET passengers = ?, driver_name = ?, plate_number = ?, etd_1 = ?, etd_2 = ?
                         WHERE id = ?
-                    ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], edit_etd_1.strip(), edit_etd_2.strip(), selected_group_id))
+                    ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], edit_etd_1, edit_etd_2, selected_group_id))
                     conn.commit()
                     conn.close()
                     st.success("🎉 Group passenger allocations updated seamlessly.")
@@ -399,7 +404,6 @@ with tab1_b:
     st.markdown("**All Recorded Groups Log Matrix:**")
     if not all_transit_df.empty:
         st.dataframe(all_transit_df, use_container_width=True)
-
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
@@ -503,7 +507,6 @@ with tab2:
             file_name=f"Meeting_Room_Schedules_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
