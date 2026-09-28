@@ -8,7 +8,28 @@ import pandas as pd
 DB_FILE = "office_hub.db"
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
+    #conn = sqlite3.connect(DB_FILE)
+
+    # 1. Establish the cloud database link
+    # Streamlit will automatically fetch the 'url' from your Secrets vault
+    conn = st.connection("postgresql", type="sql")
+    
+    # 2. Update your query functions to use the new connection
+    # Instead of cursor.execute(), use conn.query() or conn.session
+    def get_users():
+        # Streamlit caches queries for performance; ttl=0 forces a fresh reload
+        return conn.query("SELECT * FROM users;", ttl=0)
+    
+    def add_user(username, password, role, email_recipients):
+        with conn.session as session:
+            session.execute(
+                "INSERT INTO users (username, password, role, email_recipients) VALUES (:u, :p, :r, :e);",
+                {"u": username, "p": password, "r": role, "e": email_recipients}
+            )
+            session.commit()
+
+
+    
     conn.row_factory = sqlite3.Row
     return conn
 
