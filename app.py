@@ -4,138 +4,86 @@ from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
 
-# --- DATABASE SETUP ---
-DB_FILE = "office_hub.db"
+# --- 1. DATABASE CONNECTION ---
+# Establish connection to Supabase/PostgreSQL via Streamlit Secrets
+conn = st.connection("postgresql", type="sql")
 
-def get_db_connection():
-    #conn = sqlite3.connect(DB_FILE)
-
-    # 1. Establish the cloud database link
-    # Streamlit will automatically fetch the 'url' from your Secrets vault
-    conn = st.connection("postgresql", type="sql")
-    
-    # 2. Update your query functions to use the new connection
-    # Instead of cursor.execute(), use conn.query() or conn.session
-    def get_users():
-        # Streamlit caches queries for performance; ttl=0 forces a fresh reload
-        return conn.query("SELECT * FROM users;", ttl=0)
-    
-    def add_user(username, password, role, email_recipients):
-        with conn.session as session:
+# --- 2. TABLE INITIALIZATION ---
+# Automatically create the required relational database schema if it doesn't exist
+def init_db():
+    with conn.session as session:
+        # Table: Users
+        session.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(100) NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                email_recipients TEXT
+            );
+        """)
+        # Pre-seed Admin if table is completely empty
+        res = session.execute("SELECT COUNT(*) FROM users;").fetchone()
+        if res and res[0] == 0:
             session.execute(
                 "INSERT INTO users (username, password, role, email_recipients) VALUES (:u, :p, :r, :e);",
-                {"u": username, "p": password, "r": role, "e": email_recipients}
+                {"u": "admin", "p": "admin123", "r": "Admin", "e": "admin@company.com"}
             )
-            session.commit()
-
-
-    
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
         
-        # Users Table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL,
-                email TEXT NOT NULL,
-                notification_recipients TEXT
-            )
-        ''')
-        
-        # Drivers & Cars Table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS fleet (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                driver_name TEXT NOT NULL,
-                driver_phone TEXT NOT NULL,
-                car_plate TEXT NOT NULL,
-                status TEXT DEFAULT 'Available'
-            )
-        ''')
-        
-        # Holidays Table
-        cursor.execute('''
+        # Table: Holidays
+        session.execute("""
             CREATE TABLE IF NOT EXISTS holidays (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                holiday_date TEXT UNIQUE NOT NULL,
-                description TEXT
-            )
-        ''')
+                holiday_date DATE PRIMARY KEY,
+                description VARCHAR(100)
+            );
+        """)
         
-        # Overtime & Transport Requests Table
-        cursor.execute('''
+        # Table: Overtime & Fleet Logistics
+        session.execute("""
             CREATE TABLE IF NOT EXISTS overtime_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                date TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT NOT NULL,
-                needs_transport INTEGER DEFAULT 0,
-                fleet_id INTEGER,
-                route_type TEXT,
-                origin TEXT,
-                destination TEXT,
-                departure_time TEXT,
-                return_time TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(id),
-                FOREIGN KEY(fleet_id) REFERENCES fleet(id)
-            )
-        ''')
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) NOT NULL,
+                ot_date DATE NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                driver_name VARCHAR(100),
+                driver_mobile VARCHAR(50),
+                car_plate VARCHAR(50),
+                route_type VARCHAR(100),
+                origin VARCHAR(100),
+                destination VARCHAR(100),
+                departure_time TIME,
+                return_time TIME
+            );
+        """)
         
-        # Meeting Rooms Table
-        cursor.execute('''
+        # Table: Meeting Rooms
+        session.execute("""
             CREATE TABLE IF NOT EXISTS meeting_rooms (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_number TEXT UNIQUE NOT NULL,
-                room_name TEXT NOT NULL,
-                capacity INTEGER NOT NULL,
-                location TEXT NOT NULL
-            )
-        ''''')
+                room_number VARCHAR(50) PRIMARY KEY,
+                room_name VARCHAR(100) NOT NULL,
+                capacity INT NOT NULL,
+                location VARCHAR(100) NOT NULL
+            );
+        """)
         
-        # Meeting Bookings Table
-        cursor.execute('''
+        # Table: Meeting Room Bookings
+        session.execute("""
             CREATE TABLE IF NOT EXISTS room_bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                room_id INTEGER,
-                user_id INTEGER,
-                booking_date TEXT NOT NULL,
-                start_time TEXT NOT NULL,
-                end_time TEXT NOT NULL,
-                purpose TEXT,
-                group_id TEXT,
-                FOREIGN KEY(room_id) REFERENCES meeting_rooms(id),
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            )
-        ''')
-        
-        # Seed default Admin account if empty
-        cursor.execute("SELECT COUNT(*) FROM users")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO users (username, password, role, email) VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
-            
-        # Seed default meeting rooms if empty
-        cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO meeting_rooms (room_number, room_name, capacity, location) VALUES ('101', 'Boardroom', 15, '1st Floor')")
-            cursor.execute("INSERT INTO meeting_rooms (room_number, room_name, capacity, location) VALUES ('202', 'Alpha Room', 6, '2nd Floor')")
-            
-        # Seed default fleet if empty
-        cursor.execute("SELECT COUNT(*) FROM fleet")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("INSERT INTO fleet (driver_name, driver_phone, car_plate) VALUES ('John Doe', '+62812345678', 'B 1234 ABC')")
-            cursor.execute("INSERT INTO fleet (driver_name, driver_phone, car_plate) VALUES ('Jane Smith', '+6287654321', 'B 5678 DEF')")
-            
-        conn.commit()
+                id SERIAL PRIMARY KEY,
+                booking_group_id VARCHAR(100),
+                room_number VARCHAR(50) NOT NULL,
+                username VARCHAR(50) NOT NULL,
+                booking_date DATE NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                purpose VARCHAR(200)
+            );
+        """)
+        session.commit()
 
 init_db()
+    
 
 # --- HELPER FUNCTIONS ---
 def check_room_conflict(room_id, date, start_time, end_time, exclude_booking_id=None):
