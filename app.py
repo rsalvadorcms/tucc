@@ -91,6 +91,17 @@ def init_db():
             plate_number TEXT
         )
     ''')
+
+    # Create Daily Transportation Groups Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transit_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_date TEXT,
+            driver_name TEXT,
+            plate_number TEXT,
+            passengers TEXT
+        )
+    ''')
     
     # Seed default Admin if not exists
     cursor.execute("SELECT * FROM users WHERE username='admin'")
@@ -99,22 +110,21 @@ def init_db():
         
     # Seed some sample rooms if completely empty
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
 
-    # Seed some sample drivers if completely empty
+    # Seed sample drivers if empty
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+62812345678', 'BP 1234 XY')")
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+62876543210', 'BP 5678 AB')")
+    if cursor.fetchone() == 0:
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333', 'B 1234 ABC')")
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777', 'B 5678 XYZ')")
         
     conn.commit()
     conn.close()
 
 # Start DB Structure
 init_db()
-
 
 # ==============================================================================
 # 🔐 2. AUTHENTICATION USER INTERFACE
@@ -146,7 +156,6 @@ if not st.session_state.logged_in:
                 st.error("Invalid username or password configuration.")
     st.stop()
 
-
 # ==============================================================================
 # 🗂️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
@@ -158,9 +167,8 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.role = ""
     st.rerun()
 
-tabs = ["⏰ Overtime & Transport", "📅 Meeting Room Booking", "🛠️ System Administration"]
-tab1, tab2, tab3 = st.tabs(tabs)
-
+tabs = ["⏰ Overtime & Transport", "👥 Daily Transit Groups", "📅 Meeting Room Booking", "🛠️ System Administration"]
+tab1, tab1_b, tab2, tab3 = st.tabs(tabs)
 
 # --- TAB 1: OVERTIME & TRANSPORT ARRANGEMENTS ---
 with tab1:
@@ -168,10 +176,8 @@ with tab1:
     
     conn = get_db_connection()
     holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
+    drivers = conn.execute("SELECT * FROM fleet_drivers").fetchall()
     holiday_list = holidays_df['holiday_date'].tolist()
-    
-    # Fetch drivers for dropdown selection
-    drivers_list = [row['driver_name'] for row in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
     conn.close()
     
     col1, col2 = st.columns(2)
@@ -181,7 +187,6 @@ with tab1:
         is_sunday = ot_date.weekday() == 6
         is_holiday = date_str in holiday_list
         
-        # Rule Engine: Dynamic defaults for BOTH Start and End Times
         if is_sunday or is_holiday:
             default_start = time(7, 0)
             default_end = time(15, 0)
@@ -193,44 +198,30 @@ with tab1:
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=default_end)
-        needs_transport = st.checkbox("Require Transportation Logistics?")
+        needs_transport = st.checkbox("Require Individual Transportation Logistics?")
         
     with col2:
-        if needs_transport:
-            if drivers_list:
-                selected_driver = st.selectbox("Select Driver Name", ["-- Select Driver --"] + drivers_list)
-            else:
-                selected_driver = "-- Select Driver --"
-                st.warning("No drivers registered in fleet list.")
-
-            # Auto-populate based on driver selection
-            driver_name = ""
-            driver_mobile = ""
-            plate_number = ""
+        if needs_transport and drivers:
+            driver_options = [d['driver_name'] for d in drivers]
+            selected_driver = st.selectbox("Select Available Driver", driver_options)
             
-            if selected_driver != "-- Select Driver --":
-                conn = get_db_connection()
-                driver_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name=?", (selected_driver,)).fetchone()
-                conn.close()
-                if driver_info:
-                    driver_name = driver_info['driver_name']
-                    driver_mobile = driver_info['driver_mobile']
-                    plate_number = driver_info['plate_number']
-
-            st.text_input("Driver Mobile Phone Number (Auto)", value=driver_mobile, disabled=True)
-            st.text_input("Car Plate Registration Number (Auto)", value=plate_number, disabled=True)
+            conn = get_db_connection()
+            d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (selected_driver,)).fetchone()
+            conn.close()
+            
+            driver_name = selected_driver
+            driver_mobile = st.text_input("Driver Mobile Phone Number", value=d_info['driver_mobile'])
+            plate_number = st.text_input("Car Plate Registration Number", value=d_info['plate_number'])
             
             route_type = st.selectbox("Route Assignment Context", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"])
             origin = st.text_input("Origin Address", value="Main Corporate Office")
             destination = st.text_input("Target Destination")
             dep_time = st.time_input("Departure Timeline Estimate", value=end_time)
             ret_time = st.time_input("Return Timeline Estimate", value=time(23, 0))
-            
-            # Pack times as string for form persistence
-            dep_time_str = str(dep_time)
-            ret_time_str = str(ret_time)
         else:
-            driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time_str, ret_time_str = ["", "", "", "", "", "", "", ""]
+            driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time, ret_time = ["", "", "", "", "", "", "", ""]
+            if needs_transport and not drivers:
+                st.warning("⚠️ No drivers registered in the system yet. Please configure drivers in System Administration.")
 
     if st.button("Submit New Overtime Request"):
         conn = get_db_connection()
@@ -240,19 +231,17 @@ with tab1:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (st.session_state.username, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"),
               1 if needs_transport else 0, driver_name, driver_mobile, plate_number, route_type, origin, destination,
-              dep_time_str, ret_time_str))
+              str(dep_time), str(ret_time)))
         
         user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
         conn.commit()
         conn.close()
         
-        st.success("🎉 Overtime and logistical logs successfully submitted!")
+        st.success("🎉 Overtime log successfully submitted!")
         if user_info and user_info['email_recipients']:
             st.info(f"📧 Notification pushed to predetermined dispatch recipients: **{user_info['email_recipients']}**")
 
-    # Display Logs and Native Excel Export Interface
     st.subheader("📋 Overtime Submission History Log")
-    
     conn = get_db_connection()
     if st.session_state.role == "Admin":
         ot_df = pd.read_sql_query("SELECT * FROM overtime_requests", conn)
@@ -263,7 +252,6 @@ with tab1:
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
         
-        # 📊 NATIVE EXCEL DOWNLOAD ENGINE (.xlsx)
         buffer_ot = io.BytesIO()
         with pd.ExcelWriter(buffer_ot, engine='openpyxl') as writer:
             ot_df.to_excel(writer, index=False, sheet_name="Overtime Report")
@@ -275,97 +263,101 @@ with tab1:
             file_name=f"Overtime_Report_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+# --- TAB 1B: DAILY TRANSIT GROUPS DESK ---
+with tab1_b:
+    st.header("👥 Daily Transportation Grouping & Transfers Desk")
+    
+    group_col1, group_col2 = st.columns(2)
+    
+    with group_col1:
+        st.subheader("➕ Create Daily Transit Group")
+        target_group_date = st.date_input("Select Transit Date", value=date.today(), key="tg_date")
+        tg_date_str = target_group_date.strftime("%Y-%m-%d")
         
-        # ==============================================================================
-        # 🚗 ADMIN ADVANCED OVERTIME EDITOR & FLEET ASSIGNMENT PANEL
-        # ==============================================================================
-        if st.session_state.role == "Admin":
-            st.markdown("---")
-            st.subheader("✏️ Edit Overtime Request & Fleet Assignment (Admin Only)")
+        conn = get_db_connection()
+        drivers_list = conn.execute("SELECT * FROM fleet_drivers").fetchall()
+        conn.close()
+        
+        if drivers_list:
+            d_options = [d['driver_name'] for d in drivers_list]
+            selected_tg_driver = st.selectbox("Assign Driver", d_options, key="tg_driver")
             
-            available_ids = ot_df['id'].tolist()
-            selected_id = st.selectbox("Select Overtime Record ID to modify or assign transport:", available_ids)
+            conn = get_db_connection()
+            tg_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (selected_tg_driver,)).fetchone()
+            conn.close()
             
-            if selected_id:
+            st.text(f"Automated Car Plate: {tg_d_info['plate_number']}")
+            passenger_input = st.text_area("Passengers List (Separate names with commas)", placeholder="John, Alice, Bob")
+            
+            if st.button("Provision Transit Group"):
+                if passenger_input.strip():
+                    conn = get_db_connection()
+                    conn.execute('''
+                        INSERT INTO transit_groups (group_date, driver_name, plate_number, passengers)
+                        VALUES (?, ?, ?, ?)
+                    ''', (tg_date_str, selected_tg_driver, tg_d_info['plate_number'], passenger_input.strip()))
+                    conn.commit()
+                    conn.close()
+                    st.success("🎉 Transportation group created successfully.")
+                    st.rerun()
+                else:
+                    st.error("Please add at least one passenger name.")
+        else:
+            st.warning("No fleet drivers configured.")
+
+    with group_col2:
+        st.subheader("🔄 Edit Passengers / Inter-Car Transfers")
+        conn = get_db_connection()
+        active_groups = conn.execute("SELECT * FROM transit_groups").fetchall()
+        conn.close()
+        
+        if active_groups:
+            group_options = {f"ID {g['id']} | {g['group_date']} | Driver: {g['driver_name']}": g['id'] for g in active_groups}
+            selected_group_label = st.selectbox("Select Active Group ID to Modify", list(group_options.keys()))
+            selected_group_id = group_options[selected_group_label]
+            
+            conn = get_db_connection()
+            selected_group = conn.execute("SELECT * FROM transit_groups WHERE id = ?", (selected_group_id,)).fetchone()
+            drivers_edit_list = conn.execute("SELECT * FROM fleet_drivers").fetchall()
+            conn.close()
+            
+            if selected_group:
+                edit_passengers = st.text_area("Modify Passenger List (Comma separated)", value=selected_group['passengers'])
+                
+                st.markdown("**Transfer Group Assignment to Another Driver/Car:**")
+                edit_d_options = [d['driver_name'] for d in drivers_edit_list]
+                try:
+                    current_d_idx = edit_d_options.index(selected_group['driver_name'])
+                except:
+                    current_d_idx = 0
+                    
+                transfer_driver = st.selectbox("Transfer to Driver", edit_d_options, index=current_d_idx)
+                
                 conn = get_db_connection()
-                current_row = conn.execute("SELECT * FROM overtime_requests WHERE id = ?", (selected_id,)).fetchone()
-                all_drivers = [row['driver_name'] for row in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+                tr_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (transfer_driver,)).fetchone()
                 conn.close()
                 
-                if current_row:
-                    st.info(f"Modifying request submitted by personnel: **{current_row['username']}** for date **{current_row['ot_date']}**")
-                    
-                    with st.form(f"admin_edit_form_{selected_id}"):
-                        edit_col1, edit_col2 = st.columns(2)
-                        
-                        with edit_col1:
-                            try:
-                                parsed_date = datetime.strptime(current_row['ot_date'], "%Y-%m-%d").date()
-                            except:
-                                parsed_date = date.today()
-                                
-                            edit_date = st.date_input("Overtime Date", value=parsed_date)
-                            edit_start = st.text_input("OT Start Time (HH:MM)", value=current_row['start_time'])
-                            edit_end = st.text_input("OT End Time (HH:MM)", value=current_row['end_time'])
-                            edit_needs_trans = st.checkbox("Require Transportation Assignment?", value=bool(current_row['needs_transport']))
-                            edit_origin = st.text_input("Origin Address", value=current_row['origin'] or "Main Corporate Office")
-                            edit_destination = st.text_input("Target Destination", value=current_row['destination'] or "")
+                if st.button("Save Transit Group Revisions"):
+                    conn = get_db_connection()
+                    conn.execute('''
+                        UPDATE transit_groups 
+                        SET passengers = ?, driver_name = ?, plate_number = ?
+                        WHERE id = ?
+                    ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], selected_group_id))
+                    conn.commit()
+                    conn.close()
+                    st.success("🎉 Group passenger allocations updated seamlessly.")
+                    st.rerun()
+        else:
+            st.info("No transportation groups have been created yet.")
 
-                        with edit_col2:
-                            st.markdown("**Fleet & Vehicle Driver Assignment Desk:**")
-                            if all_drivers:
-                                try:
-                                    d_idx = all_drivers.index(current_row['driver_name']) + 1
-                                except:
-                                    d_idx = 0
-                                edit_driver_sel = st.selectbox("Assigned Driver Name", ["-- Select Driver --"] + all_drivers, index=d_idx)
-                            else:
-                                edit_driver_sel = "-- Select Driver --"
-                            
-                            edit_driver = edit_driver_sel if edit_driver_sel != "-- Select Driver --" else ""
-                            edit_mobile = st.text_input("Driver Mobile Phone Number Override/Manual", value=current_row['driver_mobile'] or "")
-                            edit_plate = st.text_input("Car Plate Registration Number Override/Manual", value=current_row['plate_number'] or "")
-                            
-                            route_options = ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"]
-                            try:
-                                default_idx = route_options.index(current_row['route_type'])
-                            except:
-                                default_idx = 0
-                            edit_route = st.selectbox("Route Assignment Context", route_options, index=default_idx)
-                            
-                            edit_dep = st.text_input("Departure Time (HH:MM)", value=current_row['departure_time'] or "")
-                            edit_ret = st.text_input("Return Time (HH:MM)", value=current_row['return_time'] or "")
-                        
-                        submit_changes = st.form_submit_button("Save Changes & Assign Fleet")
-                        
-                        if submit_changes:
-                            # Auto-fill profile mapping if selected driver changed and overrides are not manual
-                            if edit_driver_sel != "-- Select Driver --" and edit_mobile == "" and edit_plate == "":
-                                conn = get_db_connection()
-                                d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name=?", (edit_driver,)).fetchone()
-                                conn.close()
-                                if d_info:
-                                    edit_mobile = d_info['driver_mobile']
-                                    edit_plate = d_info['plate_number']
-
-                            conn = get_db_connection()
-                            conn.execute('''
-                                UPDATE overtime_requests 
-                                SET ot_date = ?, start_time = ?, end_time = ?, needs_transport = ?,
-                                    driver_name = ?, driver_mobile = ?, plate_number = ?, route_type = ?,
-                                    origin = ?, destination = ?, departure_time = ?, return_time = ?
-                                WHERE id = ?
-                            ''', (edit_date.strftime("%Y-%m-%d"), edit_start, edit_end, 1 if edit_needs_trans else 0,
-                                  edit_driver, edit_mobile, edit_plate, edit_route,
-                                  edit_origin, edit_destination, edit_dep, edit_ret, selected_id))
-                            conn.commit()
-                            conn.close()
-                            
-                            st.success(f"🎉 Overtime Request ID {selected_id} updated successfully!")
-                            st.rerun()
-    else:
-        st.info("No recorded overtime history logs found.")
-
+    st.subheader("📊 Active Daily Transit Matrix Log")
+    conn = get_db_connection()
+    transit_df = pd.read_sql_query("SELECT * FROM transit_groups", conn)
+    conn.close()
+    if not transit_df.empty:
+        st.dataframe(transit_df, use_container_width=True)
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
@@ -376,7 +368,7 @@ with tab2:
     conn.close()
     
     if not rooms:
-        st.warning("No physical boardrooms or meeting layout spaces are registered yet.")
+        st.warning("No physical boardrooms are registered yet.")
     else:
         room_options = {f"{r['room_name']} (Room {r['room_number']} - Capacity: {r['capacity']})": r['room_number'] for r in rooms}
         selected_room_label = st.selectbox("Choose Target Room Venue", list(room_options.keys()))
@@ -427,7 +419,7 @@ with tab2:
                 ''', (selected_room_num, t_date_str, b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchall()
                 
                 if conflicts:
-                    st.error(f"❌ Schedule Collision Error! Another team has already reserved Room {selected_room_num} on {t_date_str} during those hours.")
+                    st.error(f"❌ Schedule Collision Error! Room {selected_room_num} is already reserved on {t_date_str} during those hours.")
                     conflict_detected = True
                     break
             
@@ -446,7 +438,6 @@ with tab2:
                     st.info(f"📧 Notification logs dispatched to: **{user_info['email_recipients']}**")
             conn.close()
 
-    # Active Calendar Data Display Matrix & Native Excel Export Button
     st.subheader("📊 Master Room Allocation Schedules")
     conn = get_db_connection()
     bookings_df = pd.read_sql_query('''
@@ -459,7 +450,6 @@ with tab2:
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
         
-        # 📊 NATIVE EXCEL DOWNLOAD ENGINE (.xlsx)
         buffer_bk = io.BytesIO()
         with pd.ExcelWriter(buffer_bk, engine='openpyxl') as writer:
             bookings_df.to_excel(writer, index=False, sheet_name="Schedules Report")
@@ -471,9 +461,6 @@ with tab2:
             file_name=f"Meeting_Room_Schedules_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-    else:
-        st.info("No active meeting room allocations scheduled.")
-
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
@@ -482,115 +469,65 @@ with tab3:
     else:
         st.header("Admin Control Dashboard Engine")
         
-        # ==============================================================================
-        # 🗃️ MASTER DATABASE EXPLORER & CRUD SYSTEM (Admin Request)
-        # ==============================================================================
         st.markdown("---")
-        st.subheader("🗃️ Interactive Master Database Explorer (All Tables)")
+        st.subheader("🗃️ Master Data Tables CRUD Explorer (Admin Only)")
+        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups"]
+        selected_table = st.selectbox("Choose Database Table to View & Manage", table_options)
         
-        tables_list = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers"]
-        selected_table = st.selectbox("Select Table to View / Manage Data Records", tables_list)
+        conn = get_db_connection()
+        table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
+        conn.close()
         
-        if selected_table:
-            conn = get_db_connection()
-            table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
+        st.markdown(f"**Live Records inside `{selected_table}` table:**")
+        st.dataframe(table_df, use_container_width=True)
+        
+        col_adm1, col_adm2 = st.columns(2)
+        with col_adm1:
+            st.markdown(f"**Purge Rows from `{selected_table}`**")
+            id_column_name = "username" if selected_table in ["users", "fleet_drivers"] else ("holiday_date" if selected_table == "holidays" else "room_number" if selected_table == "meeting_rooms" else "id")
             
-            # Fetch primary keys / schema column lists
-            cursor = conn.execute(f"PRAGMA table_info({selected_table})")
-            columns_info = cursor.fetchall()
-            columns_names = [col['name'] for col in columns_info]
-            pk_col = [col['name'] for col in columns_info if col['pk'] == 1]
-            pk_name = pk_col[0] if pk_col else columns_names[0]
-            conn.close()
-            
-            st.markdown(f"**Live Records Grid view for table:** `{selected_table}`")
-            st.dataframe(table_df, use_container_width=True)
-            
-            crud_action = st.radio("Choose Record Modification Task", ["Append New Row", "Update Existing Row", "Delete Row"])
-            
-            # 1. APPEND ROW FORM
-            if crud_action == "Append New Row":
-                st.markdown(f"**Append Data Entry into `{selected_table}`**")
-                with st.form(f"append_form_{selected_table}"):
-                    input_values = {}
-                    for col in columns_names:
-                        # Skip autoincrement ID row for additions
-                        if col == 'id' and selected_table in ['overtime_requests', 'room_bookings']:
-                            continue
-                        input_values[col] = st.text_input(f"Enter `{col}` value")
-                    
-                    submit_append = st.form_submit_button("Append Data Record")
-                    if submit_append:
-                        conn = get_db_connection()
-                        placeholders = ", ".join([f":{k}" for k in input_values.keys()])
-                        fields = ", ".join(input_values.keys())
-                        try:
-                            conn.execute(f"INSERT INTO {selected_table} ({fields}) VALUES ({placeholders})", input_values)
-                            conn.commit()
-                            st.success(f"🎉 New record successfully appended to `{selected_table}`!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Execution Error: {str(e)}")
-                        finally:
-                            conn.close()
-            
-            # 2. UPDATE ROW FORM
-            elif crud_action == "Update Existing Row":
-                if table_df.empty:
-                    st.info("Table is empty. Nothing to update.")
-                else:
-                    st.markdown(f"**Modify/Update Row Entry in `{selected_table}`**")
-                    row_keys = table_df[pk_name].tolist()
-                    row_to_update = st.selectbox(f"Select Target Identifier Row to Update ({pk_name})", row_keys)
-                    
-                    if row_to_update:
-                        conn = get_db_connection()
-                        current_entry = conn.execute(f"SELECT * FROM {selected_table} WHERE {pk_name} = ?", (row_to_update,)).fetchone()
-                        conn.close()
-                        
-                        if current_entry:
-                            with st.form(f"update_form_{selected_table}_{row_to_update}"):
-                                updated_values = {}
-                                for col in columns_names:
-                                    if col == pk_name:
-                                        st.text_input(f"`{col}` (Primary Key - Fixed)", value=str(current_entry[col]), disabled=True)
-                                        continue
-                                    updated_values[col] = st.text_input(f"Edit `{col}` value", value=str(current_entry[col] if current_entry[col] is not None else ""))
-                                
-                                submit_update = st.form_submit_button("Commit Updates")
-                                if submit_update:
-                                    conn = get_db_connection()
-                                    update_set = ", ".join([f"{k} = :{k}" for k in updated_values.keys()])
-                                    updated_values['pk_val'] = row_to_update
-                                    try:
-                                        conn.execute(f"UPDATE {selected_table} SET {update_set} WHERE {pk_name} = :pk_val", updated_values)
-                                        conn.commit()
-                                        st.success(f"🎉 Row `{row_to_update}` successfully updated in `{selected_table}`!")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Execution Error: {str(e)}")
-                                    finally:
-                                        conn.close()
+            target_row_key = st.text_input(f"Enter Key value to delete (Provide matching {id_column_name}):")
+            if st.button(f"Delete Row from {selected_table}"):
+                if target_row_key:
+                    conn = get_db_connection()
+                    conn.execute(f"DELETE FROM {selected_table} WHERE {id_column_name} = ?", (target_row_key,))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Row containing key reference '{target_row_key}' successfully dropped.")
+                    st.rerun()
 
-            # 3. DELETE ROW INTERFACE
-            elif crud_action == "Delete Row":
-                if table_df.empty:
-                    st.info("Table is empty. Nothing to remove.")
-                else:
-                    st.markdown(f"**Purge Data Record Row from `{selected_table}`**")
-                    row_keys = table_df[pk_name].tolist()
-                    row_to_delete = st.selectbox(f"Select Row Target Key to Delete ({pk_name})", row_keys)
-                    
-                    if st.button(f"Permanently Delete Record {row_to_delete}"):
-                        conn = get_db_connection()
-                        try:
-                            conn.execute(f"DELETE FROM {selected_table} WHERE {pk_name} = ?", (row_to_delete,))
-                            conn.commit()
-                            st.success(f"💥 Record Row `{row_to_delete}` completely purged from `{selected_table}` database indices!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Execution Error: {str(e)}")
-                        finally:
-                            conn.close()
-                            
         st.markdown("---")
+        st.subheader("👤 Profile Credentials Manager")
+        with st.form("user_reg_form"):
+            new_user = st.text_input("New Username Account String")
+            new_pass = st.text_input("Security Access Password", type="password")
+            new_role = st.selectbox("Authorization Cleared Level", ["User", "Admin"])
+            new_email = st.text_input("Predetermined Routing Email Notifications (Comma separated)")
+            submit_user = st.form_submit_button("Register Account Credentials")
+            
+            if submit_user and new_user and new_pass:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT INTO users VALUES (?, ?, ?, ?)", (new_user, new_pass, new_role, new_email))
+                    conn.commit()
+                    st.success(f"User account credential stack for '{new_user}' successfully committed.")
+                except sqlite3.IntegrityError:
+                    st.error("System Error: That profile handle identifier string is already cataloged.")
+                conn.close()
+                
+        st.subheader("🚗 Register Corporate Fleet Driver Asset")
+        with st.form("driver_reg_form"):
+            dr_name = st.text_input("Driver Full Name")
+            dr_mob = st.text_input("Mobile Line Number")
+            dr_plat = st.text_input("Car Plate Serial Number")
+            submit_driver = st.form_submit_button("Provision Driver Mapping")
+            
+            if submit_driver and dr_name:
+                conn = get_db_connection()
+                try:
+                    conn.execute("INSERT INTO fleet_drivers VALUES (?, ?, ?)", (dr_name, dr_mob, dr_plat))
+                    conn.commit()
+                    st.success(f"Driver profile '{dr_name}' added to backend repository matrices.")
+                except sqlite3.IntegrityError:
+                    st.error("This driver name identifier is already logged.")
+                conn.close()
