@@ -1,12 +1,15 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import io
 from datetime import datetime, timedelta, time
 
-# Set page config
-st.set_page_config(page_title="Office Portal", layout="wide")
+# Set page configurations with native default theme formatting
+st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
-# 1. Self-contained Database initialization (Zero Config Required!)
+# ==============================================================================
+# ⚙️ 1. SELF-CONTAINED DATABASE ENGINE
+# ==============================================================================
 DB_FILE = "office_operations.db"
 
 def get_db_connection():
@@ -85,19 +88,22 @@ def init_db():
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
         
-    # Seed some sample rooms if empty
+    # Seed some sample rooms if completely empty
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
         
     conn.commit()
     conn.close()
 
-# Initialize DB structure immediately
+# Start DB Structure
 init_db()
 
-# 2. Authentication Logic
+
+# ==============================================================================
+# 🔐 2. AUTHENTICATION USER INTERFACE
+# ==============================================================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -105,7 +111,7 @@ if 'logged_in' not in st.session_state:
 
 if not st.session_state.logged_in:
     st.title("🏢 Office Operations Portal")
-    st.subheader("Login to access system panels")
+    st.subheader("Login to access scheduling & overtime systems")
     
     with st.form("login_form"):
         username = st.text_input("Username")
@@ -122,13 +128,16 @@ if not st.session_state.logged_in:
                 st.session_state.role = user['role']
                 st.rerun()
             else:
-                st.error("Invalid username or password.")
+                st.error("Invalid username or password configuration.")
     st.stop()
 
-# --- Main App Interface (Logged In) ---
+
+# ==============================================================================
+# 🗂️ 3. MAIN APP CONTROL PANELS
+# ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
-st.sidebar.info(f"Role: {st.session_state.role}")
-if st.sidebar.button("Logout"):
+st.sidebar.info(f"Access Level: **{st.session_state.role}**")
+if st.sidebar.button("Logout Profile"):
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.role = ""
@@ -137,45 +146,45 @@ if st.sidebar.button("Logout"):
 tabs = ["⏰ Overtime & Transport", "📅 Meeting Room Booking", "🛠️ System Administration"]
 tab1, tab2, tab3 = st.tabs(tabs)
 
-# --- TAB 1: OVERTIME & TRANSPORT ---
+
+# --- TAB 1: OVERTIME & TRANSPORT ARRANGEMENTS ---
 with tab1:
-    st.header("Request Overtime & Logistics")
+    st.header("Request Overtime & Logistics Tracking")
     
-    # Load Holidays
     conn = get_db_connection()
     holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
     holiday_list = holidays_df['holiday_date'].tolist()
+    conn.close()
     
     col1, col2 = st.columns(2)
     with col1:
-        ot_date = st.date_input("Select Date", value=datetime.today())
+        ot_date = st.date_input("Select Target Date", value=datetime.today())
         date_str = ot_date.strftime("%Y-%m-%d")
         is_sunday = ot_date.weekday() == 6
         is_holiday = date_str in holiday_list
         
-        # Rule implementation: Snap starting baselines
+        # Core Requirement Rule Engine Implementation
         default_start = time(7, 0) if (is_sunday or is_holiday) else time(17, 30)
-        st.caption(f"Rule Target Detected: {'Sunday/Holiday (07:00)' if (is_sunday or is_holiday) else 'Weekday/Saturday (17:30)'}")
+        st.caption(f"ℹ️ Automatic Rule Applied: **{'Sunday/Holiday (07:00)' if (is_sunday or is_holiday) else 'Weekday/Saturday (17:30)'}** baseline.")
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=time(21, 0))
-        
-        needs_transport = st.checkbox("Require Transportation Assignment?")
+        needs_transport = st.checkbox("Require Transportation Logistics?")
         
     with col2:
         if needs_transport:
             driver_name = st.text_input("Driver Name", value="John Doe")
-            driver_mobile = st.text_input("Driver Mobile Line")
-            plate_number = st.text_input("Car Plate Number")
-            route_type = st.selectbox("Route Category", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Dispatch"])
-            origin = st.text_input("Origin Point", value="Main Office")
-            destination = st.text_input("Destination Address")
-            dep_time = st.time_input("Departure Time", value=end_time)
-            ret_time = st.time_input("Estimated Return Time", value=time(23, 0))
+            driver_mobile = st.text_input("Driver Mobile Phone Number")
+            plate_number = st.text_input("Car Plate Registration Number")
+            route_type = st.selectbox("Route Assignment Context", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"])
+            origin = st.text_input("Origin Address", value="Main Corporate Office")
+            destination = st.text_input("Target Destination")
+            dep_time = st.time_input("Departure Timeline Estimate", value=end_time)
+            ret_time = st.time_input("Return Timeline Estimate", value=time(23, 0))
         else:
             driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time, ret_time = ["", "", "", "", "", "", "", ""]
 
-    if st.button("Submit Overtime Request"):
+    if st.button("Submit New Overtime Request"):
         conn = get_db_connection()
         conn.execute('''
             INSERT INTO overtime_requests (username, ot_date, start_time, end_time, needs_transport, 
@@ -185,17 +194,16 @@ with tab1:
               1 if needs_transport else 0, driver_name, driver_mobile, plate_number, route_type, origin, destination,
               str(dep_time), str(ret_time)))
         
-        # Email Simulation Trigger
         user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
         conn.commit()
         conn.close()
         
-        st.success("🎉 Overtime Request recorded successfully!")
+        st.success("🎉 Overtime and logistical logs successfully submitted!")
         if user_info and user_info['email_recipients']:
-            st.info(f"📧 Notification auto-routed to predetermined recipients: **{user_info['email_recipients']}**")
+            st.info(f"📧 Notification pushed to predetermined dispatch recipients: **{user_info['email_recipients']}**")
 
-    # Display / Manage Logs
-    st.subheader("Your Overtime History Log")
+    # Display Logs and Native Excel Export Interface
+    st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
     query = "SELECT * FROM overtime_requests" if st.session_state.role == "Admin" else f"SELECT * FROM overtime_requests WHERE username='{st.session_state.username}'"
     ot_df = pd.read_sql_query(query, conn)
@@ -203,48 +211,39 @@ with tab1:
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
+        
+        # 📊 NATIVE EXCEL DOWNLOAD ENGINE (.xlsx)
+        buffer_ot = io.BytesIO()
+        with pd.ExcelWriter(buffer_ot, engine='openpyxl') as writer:
+            ot_df.to_excel(writer, index=False, sheet_name="Overtime Report")
+        excel_data_ot = buffer_ot.getvalue()
+        
+        st.download_button(
+            label="📥 Download Overtime History as Excel (.xlsx)",
+            data=excel_data_ot,
+            file_name=f"Overtime_Report_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
         if st.session_state.role == "Admin":
-            delete_id = st.number_input("Enter ID row row to purge:", min_value=1, step=1, key="del_ot")
-            if st.button("Delete OT Record", key="btn_del_ot"):
+            delete_id = st.number_input("Enter Record Row ID number to purge:", min_value=1, step=1, key="del_ot")
+            if st.button("Delete Selected OT Record", key="btn_del_ot"):
                 conn = get_db_connection()
                 conn.execute("DELETE FROM overtime_requests WHERE id=?", (delete_id,))
                 conn.commit()
                 conn.close()
-                st.success(f"Row {delete_id} deleted successfully.")
+                st.success(f"Log ID {delete_id} deleted successfully.")
                 st.rerun()
 
-# --- TAB 2: MEETING ROOM BOOKING ---
+
+# --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
-    st.header("Meeting Room Desk & Scheduling")
+    st.header("Meeting Space Reservations Desk")
     
     conn = get_db_connection()
     rooms = conn.execute("SELECT * FROM meeting_rooms").fetchall()
     conn.close()
     
     if not rooms:
-        st.warning("No meeting rooms configured yet. Admins can register rooms in the Administration panel.")
+        st.warning("No physical boardrooms or meeting layout spaces are registered yet.")
     else:
-        room_options = {f"{r['room_name']} (Room {r['room_number']} - Cap: {r['capacity']})": r['room_number'] for r in rooms}
-        selected_room_label = st.selectbox("Choose Target Room", list(room_options.keys()))
-        selected_room_num = room_options[selected_room_label]
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            book_date = st.date_input("Booking Target Date", value=datetime.today(), key="bk_date")
-            b_start = st.time_input("Booking Start Time", value=time(9, 0), key="bk_start")
-            b_end = st.time_input("Booking End Time", value=time(10, 0), key="bk_end")
-        
-        with col2:
-            recurrence = st.selectbox("Recurrence Plan Strategy", ["None", "Daily", "Weekly", "Monthly"])
-            max_rec_end = datetime.today() + timedelta(days=180) # 6 months restriction
-            recurrence_end = st.date_input("Recurrence Stop Baseline (Max 6 Months Limit)", value=book_date + timedelta(days=7))
-            
-            if recurrence_end > max_rec_end:
-                st.error("⚠️ Rule validation failed: Recurrence cannot exceed a maximum safety horizon of 6 months.")
-                st.stop()
-
-        if st.button("Confirm Room Booking"):
-            # Compute targets dates based on selected strategy
-            target_dates = [book_date]
-            if recurrence != "None":
-                current_date = book_date
