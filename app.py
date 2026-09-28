@@ -2,521 +2,484 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, time
 
-# --- 1. DATABASE CONNECTION ---
-# Establish connection to Supabase/PostgreSQL via Streamlit Secrets
-conn = st.connection("postgresql", type="sql")
+# Page Configuration
+st.set_page_config(page_title="Office Management Hub", layout="wide")
 
-# --- 2. TABLE INITIALIZATION ---
-# Automatically create the required relational database schema if it doesn't exist
+# Establish Streamlit Database Connection (Uses secrets under [connections.postgresql])
+try:
+    conn = st.connection("postgresql", type="sql")
+except Exception as e:
+    st.error("Database connection configuration missing or invalid. Please check your Streamlit Secrets.")
+    st.stop()
+
+# Initialize Database Schema
 def init_db():
     with conn.session as session:
-        # Table: Users
+        # 1. Users Table
         session.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(50) UNIQUE NOT NULL,
-                password VARCHAR(100) NOT NULL,
-                role VARCHAR(20) NOT NULL,
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
                 email_recipients TEXT
             );
         """)
-        # Pre-seed Admin if table is completely empty
-        res = session.execute("SELECT COUNT(*) FROM users;").fetchone()
-        if res and res[0] == 0:
+        # Seed default admin if not exists
+        res = session.execute("SELECT COUNT(*) FROM users WHERE username = 'admin';").fetchone()
+        if res[0] == 0:
             session.execute(
                 "INSERT INTO users (username, password, role, email_recipients) VALUES (:u, :p, :r, :e);",
                 {"u": "admin", "p": "admin123", "r": "Admin", "e": "admin@company.com"}
             )
         
-        # Table: Holidays
+        # 2. Holidays Table
         session.execute("""
             CREATE TABLE IF NOT EXISTS holidays (
                 holiday_date DATE PRIMARY KEY,
-                description VARCHAR(100)
+                description TEXT NOT NULL
             );
         """)
         
-        # Table: Overtime & Fleet Logistics
+        # 3. Overtime Table (incorporating drivers and routes)
         session.execute("""
             CREATE TABLE IF NOT EXISTS overtime_requests (
                 id SERIAL PRIMARY KEY,
-                username VARCHAR(50) NOT NULL,
+                username TEXT NOT NULL,
                 ot_date DATE NOT NULL,
                 start_time TIME NOT NULL,
                 end_time TIME NOT NULL,
-                driver_name VARCHAR(100),
-                driver_mobile VARCHAR(50),
-                car_plate VARCHAR(50),
-                route_type VARCHAR(100),
-                origin VARCHAR(100),
-                destination VARCHAR(100),
-                departure_time TIME,
-                return_time TIME
+                driver_name TEXT,
+                driver_mobile TEXT,
+                car_plate TEXT,
+                route_type TEXT,
+                origin TEXT,
+                destination TEXT,
+                time_of_departure TIME,
+                time_of_return TIME
             );
         """)
         
-        # Table: Meeting Rooms
+        # 4. Meeting Rooms Table
         session.execute("""
             CREATE TABLE IF NOT EXISTS meeting_rooms (
-                room_number VARCHAR(50) PRIMARY KEY,
-                room_name VARCHAR(100) NOT NULL,
-                capacity INT NOT NULL,
-                location VARCHAR(100) NOT NULL
+                room_number TEXT PRIMARY KEY,
+                room_name TEXT NOT NULL,
+                capacity INTEGER NOT NULL,
+                location TEXT NOT NULL
             );
         """)
-        
-        # Table: Meeting Room Bookings
+        # Seed default meeting rooms if table is empty
+        res = session.execute("SELECT COUNT(*) FROM meeting_rooms;").fetchone()
+        if res[0] == 0:
+            session.execute("INSERT INTO meeting_rooms (room_number, room_name, capacity, location) VALUES ('101', 'Boardroom', 12, '1st Floor');")
+            session.execute("INSERT INTO meeting_rooms (room_number, room_name, capacity, location) VALUES ('102', 'Huddle Room', 4, '2nd Floor');")
+
+        # 5. Room Bookings Table
         session.execute("""
             CREATE TABLE IF NOT EXISTS room_bookings (
                 id SERIAL PRIMARY KEY,
-                booking_group_id VARCHAR(100),
-                room_number VARCHAR(50) NOT NULL,
-                username VARCHAR(50) NOT NULL,
+                room_number TEXT NOT NULL,
                 booking_date DATE NOT NULL,
                 start_time TIME NOT NULL,
                 end_time TIME NOT NULL,
-                purpose VARCHAR(200)
+                booked_by TEXT NOT NULL,
+                purpose TEXT
             );
         """)
         session.commit()
 
 init_db()
 
-# --- 3. HELPER LOGIC: CHECK HOLIDAYS & DOUBLE BOOKINGS ---
-def is_holiday(check_date):
-    df = conn.query("SELECT 1 FROM holidays WHERE holiday_date = :d LIMIT 1;", params={"d": check_date}, ttl=0)
-    return not df.empty
-
-def check_booking_conflict(room_number, booking_date, start_time, end_time, exclude_id=None):
-    query = """
-        SELECT * FROM room_bookings 
-        WHERE room_number = :room 
-          AND booking_date = :b_date 
-          AND NOT (end_time <= :s_time OR start_time >= :e_time)
-    """
-    params = {"room": room_number, "b_date": booking_date, "s_time": start_time, "e_time": end_time}
-    if exclude_id:
-        query += " AND id != :ex_id"
-        params["ex_id"] = exclude_id
-    df = conn.query(query, params=params, ttl=0)
-    return not df.empty
-
-# --- 4. AUTHENTICATION STATE INTERFACE ---
+# --- Authentication Logic ---
 if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-if 'user' not in st.session_state:
-    st.session_state['user'] = None
-if 'role' not in st.session_state:
-    st.session_state['role'] = None
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
 
-if not st.session_state['logged_in']:
-    st.title("🏢 Corporate Office Operations Portal")
-    st.subheader("Secure Access Gateway")
-    
-    with st.form("login_form"):
-        username = st.text_input("User ID")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Sign In")
-        
-        if submit:
-            df = conn.query("SELECT password, role FROM users WHERE username = :u LIMIT 1;", params={"u": username}, ttl=0)
-            if not df.empty and df.iloc[0]['password'] == password:
-                st.session_state['logged_in'] = True
-                st.session_state['user'] = username
-                st.session_state['role'] = df.iloc[0]['role']
-                st.rerun()
-            else:
-                st.error("❌ Invalid User ID or Password.")
-    st.stop()
+def login_user(username, password):
+    user = conn.query("SELECT * FROM users WHERE username = :u AND password = :p;", params={"u": username, "p": password}, ttl=0)
+    if not user.empty:
+        st.session_state.logged_in = True
+        st.session_state.username = username
+        st.session_state.role = user.iloc[0]['role']
+        return True
+    return False
 
-# --- 5. APP INTERFACE & NAVIGATION ---
-st.set_page_config(layout="wide")
-st.sidebar.title(f"Welcome, {st.session_state['user']}!")
-st.sidebar.caption(f"Access Privilege: **{st.session_state['role']}**")
-
-menu = st.sidebar.radio("Navigation Menu", [
-    "Meeting Room Booking", 
-    "Overtime & Transport Request", 
-    "Holiday Settings",
-    "User Account Admin"
-])
-
-if st.sidebar.button("Log Out"):
-    st.session_state['logged_in'] = False
-    st.session_state['user'] = None
-    st.session_state['role'] = None
+def logout_user():
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
     st.rerun()
 
-# -------------------------------------------------------------
-# FEATURE MODULE 1: MEETING ROOM BOOKING
-# -------------------------------------------------------------
-if menu == "Meeting Room Booking":
-    st.title("📅 Meeting Room Scheduling Desk")
-    
-    tab1, tab2, tab3 = st.tabs(["Book a Room", "View & Modify Schedules", "Manage Meeting Rooms (Admin)"])
-    
-    with tab1:
-        st.subheader("New Booking Entry")
-        rooms_df = conn.query("SELECT * FROM meeting_rooms;", ttl=0)
-        
-        if rooms_df.empty:
-            st.info("⚠️ No meeting rooms are currently registered. Please register rooms via the administration tab first.")
-        else:
-            room_options = {f"{row['room_number']} - {row['room_name']} (Cap: {row['capacity']})": row['room_number'] for _, row in rooms_df.iterrows()}
-            selected_room_label = st.selectbox("Select Room Target", list(room_options.keys()))
-            room_num = room_options[selected_room_label]
-            
-            purpose = st.text_input("Meeting Purpose/Topic")
-            start_date = st.date_input("Start Date / First Occurence", datetime.now().date())
-            t_start = st.time_input("Start Time", time(9, 0))
-            t_end = st.time_input("End Time", time(10, 0))
-            
-            recurrence = st.selectbox("Recurrence Type", ["None", "Daily", "Weekly", "Monthly"])
-            
-            if t_start >= t_end:
-                st.error("❌ Start time must precede your designated end time.")
+# --- Login UI ---
+if not st.session_state.logged_in:
+    st.title("🔒 Office Hub Login")
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.password_input("Password")
+        submit = st.form_submit_button("Login")
+        if submit:
+            if login_user(username, password):
+                st.success(f"Welcome back, {username}!")
+                st.rerun()
             else:
-                if st.button("Confirm Booking Schedule"):
-                    # Process date schedules based on recurrence constraints (Max 6 Months)
-                    dates_to_book = []
-                    max_date = start_date + timedelta(days=180)
-                    
-                    if recurrence == "None":
-                        dates_to_book.append(start_date)
-                    elif recurrence == "Daily":
-                        curr = start_date
-                        while curr <= max_date:
-                            dates_to_book.append(curr)
-                            curr += timedelta(days=1)
-                    elif recurrence == "Weekly":
-                        curr = start_date
-                        while curr <= max_date:
-                            dates_to_book.append(curr)
-                            curr += timedelta(weeks=1)
-                    elif recurrence == "Monthly":
-                        curr = start_date
-                        while curr <= max_date:
-                            dates_to_book.append(curr)
-                            # Handle variable month lengths roughly by shifting forward 30 days
-                            curr += timedelta(days=30)
-                    
-                    # Validate all target schedules against database blocks for conflicts
-                    conflicts = []
-                    for d in dates_to_book:
-                        if check_booking_conflict(room_num, d, t_start, t_end):
-                            conflicts.append(d.strftime('%Y-%m-%d'))
-                    
-                    if conflicts:
-                        st.error(f"❌ Booking conflict encountered! The room is already occupied on these dates: {', '.join(conflicts[:5])}{'...' if len(conflicts)>5 else ''}")
-                    else:
-                        import uuid
-                        group_id = str(uuid.uuid4())[:8]
-                        with conn.session as session:
-                            for d in dates_to_book:
-                                session.execute("""
-                                    INSERT INTO room_bookings (booking_group_id, room_number, username, booking_date, start_time, end_time, purpose)
-                                    VALUES (:g, :r, :u, :d, :st, :et, :p);
-                                """, {"g": group_id, "r": room_num, "u": st.session_state['user'], "d": d, "st": t_start, "et": t_end, "p": purpose})
-                            session.commit()
-                        
-                        # Generate notification text
-                        user_info = conn.query("SELECT email_recipients FROM users WHERE username = :u LIMIT 1;", params={"u": st.session_state['user']}, ttl=0)
-                        recipients = user_info.iloc[0]['email_recipients'] if not user_info.empty else "N/A"
-                        
-                        st.success(f"🎉 Booking successfully recorded! Sequence initialized over {len(dates_to_book)} booking days.")
-                        st.info(f"📧 **Automated Notification Summary sent to:** [{recipients}]\n\n**Content:** Room {room_num} booked by {st.session_state['user']} for '{purpose}' on {start_date} at {t_start}-{t_end}.")
+                st.error("Invalid Username or Password")
+    st.stop()
+
+# --- App Navigation Header ---
+st.title("🏢 Office Operations Management Portal")
+st.sidebar.markdown(f"**User:** {st.session_state.username} ({st.session_state.role})")
+if st.sidebar.button("Logout"):
+    logout_user()
+
+tabs = ["📅 Meeting Room Booking", "⏳ Overtime & Transport", "⚙️ Admin Dashboard"]
+tab1, tab2, tab3 = st.tabs(tabs)
+
+# ==========================================
+# TAB 1: MEETING ROOM BOOKING
+# ==========================================
+with tab1:
+    st.header("Meeting Room Reservation System")
     
-    with tab2:
-        st.subheader("Active Bookings Dashboard")
-        filter_room = st.text_input("Filter View by Room Number (Leave empty to view all)")
-        
-        query = "SELECT * FROM room_bookings"
-        params = {}
-        if filter_room:
-            query += " WHERE room_number = :r"
-            params["r"] = filter_room
-        query += " ORDER BY booking_date ASC, start_time ASC;"
-        
-        bookings_df = conn.query(query, params=params, ttl=0)
-        
-        if bookings_df.empty:
-            st.write("No meetings scheduled matching your filter requirements.")
-        else:
-            st.dataframe(bookings_df, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("Modify / Cancel Existing Booking")
-            booking_id = st.number_input("Enter Booking ID to update/remove", min_value=1, step=1)
-            
-            target_booking = conn.query("SELECT * FROM room_bookings WHERE id = :id LIMIT 1;", params={"id": booking_id}, ttl=0)
-            if not target_booking.empty:
-                st.write(f"Selected Booking: **{target_booking.iloc[0]['purpose']}** on **{target_booking.iloc[0]['booking_date']}**")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    new_purpose = st.text_input("Modify Purpose", value=target_booking.iloc[0]['purpose'])
-                    new_date = st.date_input("Modify Date", value=pd.to_datetime(target_booking.iloc[0]['booking_date']).date())
-                    new_start = st.time_input("Modify Start Time", value=pd.to_datetime(str(target_booking.iloc[0]['start_time'])).time())
-                    new_end = st.time_input("Modify End Time", value=pd.to_datetime(str(target_booking.iloc[0]['end_time'])).time())
-                    
-                    if st.button("Apply Changes"):
-                        if check_booking_conflict(target_booking.iloc[0]['room_number'], new_date, new_start, new_end, exclude_id=booking_id):
-                            st.error("❌ Alteration conflicts with an existing schedule footprint.")
-                        else:
-                            with conn.session as session:
-                                session.execute("""
-                                    UPDATE room_bookings 
-                                    SET purpose = :p, booking_date = :d, start_time = :st, end_time = :et 
-                                    WHERE id = :id;
-                                """, {"p": new_purpose, "d": new_date, "st": new_start, "et": new_end, "id": booking_id})
-                                session.commit()
-                            st.success("🔄 Booking successfully modified.")
-                            st.rerun()
-                            
-                with col2:
-                    st.write("Danger Zone Operations")
-                    if st.button("🗑️ Delete Single Booking Entry", key="del_single"):
-                        with conn.session as session:
-                            session.execute("DELETE FROM room_bookings WHERE id = :id;", {"id": booking_id})
-                            session.commit()
-                        st.success("Entry removed completely from log records.")
-                        st.rerun()
-                        
-                    group_id_val = target_booking.iloc[0]['booking_group_id']
-                    if group_id_val and st.button("💥 Cancel Whole Recurring Sequence", key="del_group"):
-                        with conn.session as session:
-                            session.execute("DELETE FROM room_bookings WHERE booking_group_id = :g;", {"g": group_id_val})
-                            session.commit()
-                        st.success("Entire related calendar chain cleared.")
-                        st.rerun()
-            else:
-                st.caption("Provide a valid ID from the table above to reveal modification options.")
-
-    with tab3:
-        if st.session_state['role'] != "Admin":
-            st.error("🔒 Only administrative profiles possess permissions to register new structural meeting rooms.")
-        else:
-            st.subheader("Register Core Structural Meeting Room")
-            with st.form("add_room_form"):
-                r_num = st.text_input("Room Number (Unique Identifier, e.g. CONF-401)")
-                r_name = st.text_input("Display Room Name")
-                r_cap = st.number_input("Capacity Limits", min_value=1, value=10)
-                r_loc = st.text_input("Building Location / Floor Level")
-                submit_room = st.form_submit_button("Add Asset to Infrastructure")
-                
-                if submit_room:
-                    if not r_num or not r_name:
-                        st.error("Please supply valid identification variables.")
-                    else:
-                        with conn.session as session:
-                            session.execute("""
-                                INSERT INTO meeting_rooms (room_number, room_name, capacity, location)
-                                VALUES (:num, :name, :cap, :loc)
-                                ON CONFLICT (room_number) DO UPDATE SET room_name = :name, capacity = :cap, location = :loc;
-                            """, {"num": r_num, "name": r_name, "cap": r_cap, "loc": r_loc})
-                            session.commit()
-                        st.success(f"Room Asset '{r_num}' has been committed to infrastructure records.")
-                        st.rerun()
-
-# -------------------------------------------------------------
-# FEATURE MODULE 2: OVERTIME & FLEET LOGISTICS
-# -------------------------------------------------------------
-elif menu == "Overtime & Transport Request":
-    st.title("🚗 Overtime Requests & Logistics Deck")
-    
-    t1, t2 = st.tabs(["Log OT Request", "Review & Track Requests"])
-    
-    with t1:
-        st.subheader("New Overtime & Transportation Booking Log")
-        
-        ot_date = st.date_input("Target Date for Log", datetime.now().date())
-        
-        # Calculate dynamic logic rules based on calendar target classification
-        is_holiday_flag = is_holiday(ot_date)
-        is_sunday = (ot_date.weekday() == 6)
-        
-        if is_holiday_flag or is_sunday:
-            rule_context = "Sunday / Holiday Schedule (07:00 Baseline Rule)"
-            default_start = time(7, 0)
-        else:
-            rule_context = "Standard Weekday Schedule (17:30 Default Rule)"
-            default_start = time(17, 30)
-            
-        st.info(f"📅 **Context Engine Diagnosis:** Verified as **{rule_context}**")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("##### ⏱️ Hours Logged")
-            start_time = st.time_input("OT Start window", default_start)
-            end_time = st.time_input("OT Termination window", time(21, 0))
-        
-        with col2:
-            st.markdown("##### 🚙 Fleet Desk Assignment (Optional)")
-            driver_name = st.text_input("Driver Name")
-            driver_mobile = st.text_input("Driver Contact Line")
-            car_plate = st.text_input("Vehicle License Plate")
-            route_type = st.selectbox("Route Configuration Profile", [
-                "Weekday work", "Sunday work", "Sunday shopping", "Holiday dispatch", "N/A"
-            ])
-            origin = st.text_input("Origin Point", "Main Office Block")
-            destination = st.text_input("Dropoff Destination Address")
-            dep_time = st.time_input("Estimated Fleet Departure", start_time)
-            ret_time = st.time_input("Estimated Fleet Return", end_time)
-            
-        if start_time >= end_time:
-            st.error("❌ End time window must be placed chronologically after the initialization window.")
-        else:
-            if st.button("Publish Log Entry"):
-                with conn.session as session:
-                    session.execute("""
-                        INSERT INTO overtime_requests (
-                            username, ot_date, start_time, end_time, driver_name, 
-                            driver_mobile, car_plate, route_type, origin, destination, departure_time, return_time
-                        ) VALUES (:u, :d, :st, :et, :dn, :dm, :cp, :rt, :ori, :dest, :dept, :rett);
-                    """, {
-                        "u": st.session_state['user'], "d": ot_date, "st": start_time, "et": end_time,
-                        "dn": driver_name, "dm": driver_mobile, "cp": car_plate, "rt": route_type,
-                        "ori": origin, "dest": destination, "dept": dep_time, "rett": ret_time
-                    })
-                    session.commit()
-                
-                # Fetch target emails linked to layout profile structure
-                user_info = conn.query("SELECT email_recipients FROM users WHERE username = :u LIMIT 1;", params={"u": st.session_state['user']}, ttl=0)
-                recipients = user_info.iloc[0]['email_recipients'] if not user_info.empty else "N/A"
-                
-                st.success("🎉 Your Overtime Request and Fleet assignment sheet have been published successfully.")
-                st.info(f"📧 **Automated Corporate Notification dispatched to:** [{recipients}]\n\n**Content Summary:** OT Request by {st.session_state['user']} logged for {ot_date} starting at {start_time}.")
-
-    with t2:
-        st.subheader("Corporate Logs")
-        
-        # Admins see everything, regular users see only their own items
-        if st.session_state['role'] == "Admin":
-            ot_df = conn.query("SELECT * FROM overtime_requests ORDER BY ot_date DESC;", ttl=0)
-        else:
-            ot_df = conn.query("SELECT * FROM overtime_requests WHERE username = :u ORDER BY ot_date DESC;", params={"u": st.session_state['user']}, ttl=0)
-            
-        if ot_df.empty:
-            st.write("No overtime database rows found matching user visibility scopes.")
-        else:
-            st.dataframe(ot_df, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("Manage Database Rows")
-            row_to_manage = st.number_input("Specify Entry ID for removal or alteration", min_value=1, step=1, key="ot_row_id")
-            
-            target_ot = conn.query("SELECT * FROM overtime_requests WHERE id = :id LIMIT 1;", params={"id": row_to_manage}, ttl=0)
-            if not target_ot.empty:
-                # Enforce rule: regular users cannot modify other profiles
-                if st.session_state['role'] != "Admin" and target_ot.iloc[0]['username'] != st.session_state['user']:
-                    st.error("🔒 Security Exception: Access Denied. Profile matching constraints broken.")
-                else:
-                    if st.button("🗑️ Purge Entry Record", key="del_ot"):
-                        with conn.session as session:
-                            session.execute("DELETE FROM overtime_requests WHERE id = :id;", {"id": row_to_manage})
-                            session.commit()
-                        st.success("Log item successfully expunged from primary ledgers.")
-                        st.rerun()
-            else:
-                st.caption("Provide an active ID value to reveal modifications tools.")
-
-# -------------------------------------------------------------
-# FEATURE MODULE 3: HOLIDAY MANAGEMENT
-# -------------------------------------------------------------
-elif menu == "Holiday Settings":
-    st.title("📅 Corporate Calendar & Holiday Registry")
+    # 1. Fetch available rooms
+    rooms_df = conn.query("SELECT * FROM meeting_rooms;", ttl=0)
     
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.subheader("Register Holiday Event")
-        if st.session_state['role'] != "Admin":
-            st.error("🔒 Administrative clear level required to alter calendar settings.")
+        st.subheader("New Booking")
+        if rooms_df.empty:
+            st.warning("No meeting rooms available. Admin must add a room first.")
         else:
-            with st.form("holiday_form"):
-                h_date = st.date_input("Holiday Calendar Date Target")
-                h_desc = st.text_input("Event Classification (e.g. New Year's Day)")
-                submit_h = st.form_submit_button("Commit Holiday to Master Configuration")
-                
-                if submit_h:
-                    with conn.session as session:
-                        session.execute("""
-                            INSERT INTO holidays (holiday_date, description) VALUES (:d, :desc)
-                            ON CONFLICT (holiday_date) DO UPDATE SET description = :desc;
-                        """, {"d": h_date, "desc": h_desc})
-                        session.commit()
-                    st.success("Holiday record saved.")
-                    st.rerun()
-                    
-    with col2:
-        st.subheader("Active Calendar Footprints Registered")
-        holidays_df = conn.query("SELECT * FROM holidays ORDER BY holiday_date ASC;", ttl=0)
-        if holidays_df.empty:
-            st.write("No custom company calendar events declared yet.")
-        else:
-            st.dataframe(holidays_df, use_container_width=True)
+            room_options = {f"{row['room_number']} - {row['room_name']} (Cap: {row['capacity']})": row['room_number'] for _, row in rooms_df.iterrows()}
+            selected_room_lbl = st.selectbox("Select Room", list(room_options.keys()))
+            selected_room_no = room_options[selected_room_lbl]
             
-            if st.session_state['role'] == "Admin":
-                st.markdown("##### Remove Calendar Footprint")
-                del_h_date = st.date_input("Target Date to Remove", value=holidays_df.iloc[0]['holiday_date'])
-                if st.button("Delete Selected Holiday"):
+            booking_date = st.date_input("Meeting Date", datetime.today())
+            start_time = st.time_input("Start Time", time(9, 0))
+            end_time = st.time_input("End Time", time(10, 0))
+            purpose = st.text_input("Meeting Purpose/Subject")
+            
+            # Recurrence Configuration
+            is_recurring = st.checkbox("Is this a recurring meeting?")
+            recurrence_type = "None"
+            if is_recurring:
+                recurrence_type = st.selectbox("Recurrence Interval", ["Daily", "Weekly", "Monthly"])
+                st.info("⚠️ Note: Maximum recurrence limit is 6 months down the line.")
+                
+            if st.button("Check & Book Room"):
+                if start_time >= end_time:
+                    st.error("Error: End time must occur after the start time.")
+                else:
+                    # Generate all dates to evaluate based on recurrence rules
+                    dates_to_book = [booking_date]
+                    max_date = booking_date + timedelta(days=180) # 6 months cap
+                    
+                    if is_recurring:
+                        current_date = booking_date
+                        while True:
+                            if recurrence_type == "Daily":
+                                current_date += timedelta(days=1)
+                            elif recurrence_type == "Weekly":
+                                current_date += timedelta(weeks=1)
+                            elif recurrence_type == "Monthly":
+                                # Simple monthly shift estimation
+                                current_date += timedelta(days=30)
+                                
+                            if current_date > max_date:
+                                break
+                            dates_to_book.append(current_date)
+                    
+                    # Conflict Check Algorithm
+                    has_conflict = False
+                    conflicting_date = None
+                    
+                    for d in dates_to_book:
+                        # Simple non-overlapping check syntax compatible with Postgres
+                        conflict_query = """
+                            SELECT COUNT(*) FROM room_bookings 
+                            WHERE room_number = :r 
+                            AND booking_date = :d 
+                            AND NOT (:end_t <= start_time OR :start_t >= end_time);
+                        """
+                        res = conn.query(conflict_query, params={"r": selected_room_no, "d": d, "start_t": start_time, "end_t": end_time}, ttl=0)
+                        if res.iloc[0, 0] > 0:
+                            has_conflict = True
+                            conflicting_date = d
+                            break
+                            
+                    if has_conflict:
+                        st.error(f"❌ Booking conflict detected on date: {conflicting_date}. Please modify scheduling.")
+                    else:
+                        # Perform safe transaction commit
+                        with conn.session as session:
+                            for d in dates_to_book:
+                                session.execute("""
+                                    INSERT INTO room_bookings (room_number, booking_date, start_time, end_time, booked_by, purpose)
+                                    VALUES (:r, :d, :st, :et, :user, :p);
+                                """, {"r": selected_room_no, "d": d, "st": start_time, "et": end_time, "user": st.session_state.username, "p": purpose})
+                            session.commit()
+                        
+                        # Fetch email recipients designated for this user profile to trigger notification
+                        user_info = conn.query("SELECT email_recipients FROM users WHERE username = :u;", params={"u": st.session_state.username}, ttl=0)
+                        recipients = user_info.iloc[0]['email_recipients'] if not user_info.empty else "N/A"
+                        
+                        st.success(f"🎉 Successfully reserved room for {len(dates_to_book)} session(s)!")
+                        st.info(f"📧 Notification sent to recipients configured on your user profile: {recipients}")
+                        st.rerun()
+
+    with col2:
+        st.subheader("Current Bookings Dashboard")
+        all_bookings = conn.query("""
+            SELECT b.id, b.room_number, r.room_name, b.booking_date, b.start_time, b.end_time, b.booked_by, b.purpose 
+            FROM room_bookings b
+            JOIN meeting_rooms r ON b.room_number = r.room_number
+            ORDER BY b.booking_date ASC, b.start_time ASC;
+        """, ttl=0)
+        
+        if all_bookings.empty:
+            st.info("No active room reservations found.")
+        else:
+            st.dataframe(all_bookings, use_container_width=True)
+            
+            # Allow users to delete their own bookings, or Admins to delete any
+            st.markdown("**Cancel a Reservation**")
+            cancel_id = st.number_input("Enter Booking ID to remove", min_value=1, step=1)
+            if st.button("Delete Booking"):
+                # Verify permission
+                check_owner = conn.query("SELECT booked_by FROM room_bookings WHERE id = :id;", params={"id": cancel_id}, ttl=0)
+                if check_owner.empty:
+                    st.error("Booking ID not found.")
+                elif st.session_state.role == "Admin" or check_owner.iloc[0]['booked_by'] == st.session_state.username:
+                    with conn.session as session:
+                        session.execute("DELETE FROM room_bookings WHERE id = :id;", {"id": cancel_id})
+                        session.commit()
+                    st.success(f"Booking #{cancel_id} removed.")
+                    st.rerun()
+                else:
+                    st.error("Permission denied. You can only delete your own bookings.")
+
+# ==========================================
+# TAB 2: OVERTIME & TRANSPORT
+# ==========================================
+with tab2:
+    st.header("Overtime Logging & Transportation Coordination")
+    
+    col_ot1, col_ot2 = st.columns([1, 2])
+    
+    with col_ot1:
+        st.subheader("Log Overtime Session")
+        ot_date = st.date_input("Date of Overtime", datetime.today())
+        
+        # Calculate dynamic start time baseline based on Day of Week and Holiday Table
+        is_holiday = not conn.query("SELECT 1 FROM holidays WHERE holiday_date = :d;", params={"d": ot_date}, ttl=0).empty
+        is_sunday = (ot_date.weekday() == 6)
+        
+        if is_sunday or is_holiday:
+            default_start = time(7, 0)
+            st.caption("ℹ️ Sunday/Holiday detected. Default OT start rules snap to **07:00**.")
+        else:
+            default_start = time(17, 30)
+            st.caption("ℹ️ Standard Workday detected (Mon-Sat). Default OT start rules snap to **17:30**.")
+            
+        start_t_ot = st.time_input("OT Start Time", default_start)
+        end_t_ot = st.time_input("OT End Time", time(21, 0))
+        
+        st.markdown("---")
+        st.subheader("Fleet Coordination Add-on")
+        need_driver = st.checkbox("Requires Fleet Assignment / Transportation?")
+        
+        # Fleet input defaults
+        driver_name, driver_mobile, car_plate, route_type, origin, destination = "", "", "", "Weekday work", "", ""
+        dep_time, ret_time = time(17, 30), time(21, 0)
+        
+        if need_driver:
+            driver_name = st.text_input("Driver Full Name")
+            driver_mobile = st.text_input("Driver Mobile Line")
+            car_plate = st.text_input("Vehicle Plate Number")
+            route_type = st.selectbox("Route Category / Rule", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday dispatch"])
+            origin = st.text_input("Pickup Origin Point")
+            destination = st.text_input("Dropoff Destination Point")
+            dep_time = st.time_input("Departure Log Estimation", start_t_ot)
+            ret_time = st.time_input("Return Log Estimation", end_t_ot)
+            
+        if st.button("Submit Overtime Request"):
+            if start_t_ot >= end_t_ot:
+                st.error("Error: Overtime timeline layout is inverted. Fix start/end settings.")
+            else:
+                with conn.session as session:
+                    session.execute("""
+                        INSERT INTO overtime_requests (
+                            username, ot_date, start_time, end_time, 
+                            driver_name, driver_mobile, car_plate, route_type, 
+                            origin, destination, time_of_departure, time_of_return
+                        ) VALUES (:u, :d, :st, :et, :dn, :dm, :cp, :rt, :ori, :dest, :dep, :ret);
+                    """, {
+                        "u": st.session_state.username, "d": ot_date, "st": start_t_ot, "et": end_t_ot,
+                        "dn": driver_name if need_driver else None,
+                        "dm": driver_mobile if need_driver else None,
+                        "cp": car_plate if need_driver else None,
+                        "rt": route_type if need_driver else None,
+                        "ori": origin if need_driver else None,
+                        "dest": destination if need_driver else None,
+                        "dep": dep_time if need_driver else None,
+                        "ret": ret_time if need_driver else None
+                    })
+                    session.commit()
+                
+                # Dynamic Email Mock Dispatch Notification Lookup
+                user_info = conn.query("SELECT email_recipients FROM users WHERE username = :u;", params={"u": st.session_state.username}, ttl=0)
+                recipients = user_info.iloc[0]['email_recipients'] if not user_info.empty else "N/A"
+                
+                st.success("🎉 Overtime request and transportation schedule successfully logged into central ledger!")
+                st.info(f"📧 Notification digest sent automatically to specified profile contacts: {recipients}")
+                st.rerun()
+
+    with col_ot2:
+        st.subheader("Overtime Ledger & Logs Ledger")
+        ot_logs = conn.query("SELECT * FROM overtime_requests ORDER BY ot_date DESC, start_time DESC;", ttl=0)
+        if ot_logs.empty:
+            st.info("No overtime logging transactions populated yet.")
+        else:
+            st.dataframe(ot_logs, use_container_width=True)
+            
+            st.markdown("**Modify or Cancel Log Row Entry**")
+            delete_ot_id = st.number_input("Enter Overtime ID to cancel/remove", min_value=1, step=1)
+            if st.button("Delete Overtime Request"):
+                check_ot_owner = conn.query("SELECT username FROM overtime_requests WHERE id = :id;", params={"id": delete_ot_id}, ttl=0)
+                if check_ot_owner.empty:
+                    st.error("Overtime record ID not found.")
+                elif st.session_state.role == "Admin" or check_ot_owner.iloc[0]['username'] == st.session_state.username:
+                    with conn.session as session:
+                        session.execute("DELETE FROM overtime_requests WHERE id = :id;", {"id": delete_ot_id})
+                        session.commit()
+                    st.success(f"Overtime record entry #{delete_ot_id} removed.")
+                    st.rerun()
+                else:
+                    st.error("Permission denied. You can only remove your own log records.")
+
+# ==========================================
+# TAB 3: ADMIN DASHBOARD
+# ==========================================
+with tab3:
+    st.header("Administrative Command Dashboard")
+    if st.session_state.role != "Admin":
+        st.warning("🛑 Access restricted. Administrative clearance role flag missing.")
+    else:
+        admin_subtab1, admin_subtab2, admin_subtab3 = st.tabs(["👤 Manage Users", "🏖️ Holiday Settings", "🚪 Manage Meeting Rooms"])
+        
+        # User Administration Subtab
+        with admin_subtab1:
+            st.subheader("Register System User Profiles")
+            with st.form("add_user_form"):
+                new_username = st.text_input("New Username Account String")
+                new_password = st.text_input("New Password Account String", type="password")
+                new_role = st.selectbox("Assign Privilege Target", ["User", "Admin"])
+                new_emails = st.text_input("Notification Email Recipients (separated by commas)")
+                user_submit = st.form_submit_button("Create User Account Profile")
+                
+                if user_submit:
+                    if not new_username or not new_password:
+                        st.error("Username and Password are mandatory fields.")
+                    else:
+                        try:
+                            with conn.session as session:
+                                session.execute("""
+                                    INSERT INTO users (username, password, role, email_recipients)
+                                    VALUES (:u, :p, :r, :e);
+                                """, {"u": new_username, "p": new_password, "r": new_role, "e": new_emails})
+                                session.commit()
+                            st.success(f"Account Profile '{new_username}' added to platform database.")
+                        except Exception as ex:
+                            st.error(f"Failed to create profile. Username may already exist. Error details: {ex}")
+            
+            st.markdown("---")
+            st.subheader("System Access Directory Profile List")
+            system_users = conn.query("SELECT username, role, email_recipients FROM users;", ttl=0)
+            st.dataframe(system_users, use_container_width=True)
+            
+            st.markdown("**Revoke System Access Profile**")
+            delete_user_target = st.text_input("Enter EXACT Username string to remove from ledger")
+            if st.button("Delete User Profile Row"):
+                if delete_user_target == "admin":
+                    st.error("Fatal Protection Rule: Seed admin profile line cannot be dropped.")
+                else:
+                    with conn.session as session:
+                        session.execute("DELETE FROM users WHERE username = :u;", {"u": delete_user_target})
+                        session.commit()
+                    st.success(f"Access revoked for account target '{delete_user_target}'.")
+                    st.rerun()
+
+        # Holiday Calendar Configuration Subtab
+        with admin_subtab2:
+            st.subheader("Configure Calendar Statutory Holidays")
+            with st.form("holiday_form"):
+                h_date = st.date_input("Holiday Calendar Target", datetime.today())
+                h_desc = st.text_input("Statutory Description (e.g. Christmas, New Year)")
+                h_submit = st.form_submit_button("Register Holiday Blueprint Date")
+                
+                if h_submit:
+                    try:
+                        with conn.session as session:
+                            session.execute("INSERT INTO holidays (holiday_date, description) VALUES (:d, :desc);", {"d": h_date, "desc": h_desc})
+                            session.commit()
+                        st.success(f"Registered calendar holiday rule row for: {h_date}")
+                    except Exception:
+                        st.error("Holiday rule execution error. Ensure entry rule does not conflict or duplicate baseline logs.")
+                        
+            st.markdown("---")
+            st.subheader("Configured Holiday Calendar Ledgers")
+            holidays_df = conn.query("SELECT * FROM holidays ORDER BY holiday_date ASC;", ttl=0)
+            if holidays_df.empty:
+                st.info("No administrative statutory holiday rules customized yet.")
+            else:
+                st.dataframe(holidays_df, use_container_width=True)
+                
+                st.markdown("**Remove Registered Holiday Rule Line**")
+                del_h_date = st.date_input("Select Date Rule To Clear", datetime.today(), key="del_h_date")
+                if st.button("Delete Holiday Calendar Line"):
                     with conn.session as session:
                         session.execute("DELETE FROM holidays WHERE holiday_date = :d;", {"d": del_h_date})
                         session.commit()
-                    st.success("Holiday baseline calendar cleared successfully.")
+                    st.success(f"Holiday calendar parameter rule removed for: {del_h_date}")
                     st.rerun()
 
-# -------------------------------------------------------------
-# FEATURE MODULE 4: USER MANAGER CONTROL
-# -------------------------------------------------------------
-elif menu == "User Account Admin":
-    st.title("👥 User Profile & System Credentials Admin")
-    
-    if st.session_state['role'] != "Admin":
-        st.error("🔒 System Administrator Clearance Level mandatory to open this panel.")
-    else:
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.subheader("Add / Update User Profile Account")
-            with st.form("user_reg_form"):
-                new_user = st.text_input("Desired User ID (Plaintext login handle)")
-                new_pass = st.text_input("Access Password Token", type="password")
-                new_role = st.selectbox("Role Assignment Matrix", ["User", "Admin"])
-                new_emails = st.text_area("Default Notification Mailboxes (Comma-separated addresses list)")
-                submit_user = st.form_submit_button("Save User Account")
+        # Meeting Room Modification Subtab
+        with admin_subtab3:
+            st.subheader("Add a New Meeting Room")
+            with st.form("room_form"):
+                r_num = st.text_input("Room Number (Unique ID)")
+                r_name = st.text_input("Room Name")
+                r_cap = st.number_input("Seating Capacity", min_value=1, step=1, value=10)
+                r_loc = st.text_input("Physical Location (e.g., Building A, Floor 3)")
+                room_submit = st.form_submit_button("Register Meeting Room")
                 
-                if submit_user:
-                    if not new_user or not new_pass:
-                        st.error("Username or password credentials cannot remain blank.")
+                if room_submit:
+                    if not r_num or not r_name:
+                        st.error("Room Number and Name are required.")
                     else:
-                        with conn.session as session:
-                            session.execute("""
-                                INSERT INTO users (username, password, role, email_recipients)
-                                VALUES (:u, :p, :r, :e)
-                                ON CONFLICT (username) DO UPDATE SET password = :p, role = :r, email_recipients = :e;
-                            """, {"u": new_user, "p": new_pass, "r": new_role, "e": new_emails})
-                            session.commit()
-                        st.success(f"System profile for user '{new_user}' committed successfully.")
-                        st.rerun()
-                        
-        with col2:
-            st.subheader("Registered Active Profile Registry")
-            users_df = conn.query("SELECT id, username, role, email_recipients FROM users ORDER BY username ASC;", ttl=0)
-            st.dataframe(users_df, use_container_width=True)
-            
+                        try:
+                            with conn.session as session:
+                                session.execute("""
+                                    INSERT INTO meeting_rooms (room_number, room_name, capacity, location)
+                                    VALUES (:rn, :name, :cap, :loc);
+                                """, {"rn": r_num, "name": r_name, "cap": r_cap, "loc": r_loc})
+                                session.commit()
+                            st.success(f"Meeting room {r_num} ('{r_name}') registered successfully.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error registering room. ID may already exist: {e}")
+                            
             st.markdown("---")
-            st.subheader("Purge Profile Control")
-            user_id_to_del = st.number_input("Target Database Row ID to Delete", min_value=1, step=1)
+            st.subheader("Manage Current Meeting Rooms")
+            st.dataframe(rooms_df, use_container_width=True)
             
-            if st.button("💥 Permanent Deletion of User Account"):
-                # Safety feature: Prevent the active user from deleting themselves
-                check_self = conn.query("SELECT username FROM users WHERE id = :id LIMIT 1;", params={"id": user_id_to_del}, ttl=0)
-                if not check_self.empty and check_self.iloc[0]['username'] == st.session_state['user']:
-                    st.error("❌ Safeguard warning: Self-deletion block invoked. You cannot delete your own active session account.")
-                else:
-                    with conn.session as session:
-                        session.execute("DELETE FROM users WHERE id = :id;", {"id": user_id_to_del})
-                        session.commit()
-                    st.success("Target profile cleared.")
-                    st.rerun()
+            del_room_num = st.text_input("Enter Room Number to Delete")
+            if st.button("Delete Meeting Room"):
+                with conn.session as session:
+                    # Also clean up bookings for that room
+                    session.execute("DELETE FROM room_bookings WHERE room_number = :rn;", {"rn": del_room_num})
+                    session.execute("DELETE FROM meeting_rooms WHERE room_number = :rn;", {"rn": del_room_num})
+                    session.commit()
+                st.success(f"Room {del_room_num} and its corresponding bookings have been removed.")
+                st.rerun()
