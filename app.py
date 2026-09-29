@@ -554,7 +554,6 @@ with tab3:
         
         import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers"], key="import_tbl_sel")
         
-        # Schema definition mapping for import templates
         table_schemas = {
             "users": ["username", "password", "role", "email_recipients", "emp_name"],
             "holidays": ["holiday_date", "description"],
@@ -564,7 +563,6 @@ with tab3:
         req_cols = table_schemas[import_table]
         st.caption(f"ℹ️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
         
-        # Generate downloadable Excel template
         buffer_template = io.BytesIO()
         template_df = pd.DataFrame(columns=req_cols)
         with pd.ExcelWriter(buffer_template, engine='openpyxl') as writer:
@@ -584,10 +582,7 @@ with tab3:
             try:
                 import_df = pd.read_excel(uploaded_file)
                 
-                # Normalize column headers to lowercase
                 import_df.columns = [str(c).strip().lower() for c in import_df.columns]
-                
-                # Check for missing required columns
                 missing_cols = [c for c in req_cols if c not in import_df.columns]
                 
                 if missing_cols:
@@ -606,7 +601,6 @@ with tab3:
                         success_count = 0
                         for _, row in import_df.iterrows():
                             vals = [None if pd.isna(row[c]) else str(row[c]).strip() for c in req_cols]
-                            # INSERT OR REPLACE handles primary key updates cleanly
                             cursor.execute(f"INSERT OR REPLACE INTO {import_table} ({cols_str}) VALUES ({placeholders})", vals)
                             success_count += 1
                             
@@ -633,9 +627,9 @@ with tab3:
         
         column_config = {}
         
-        # Mask password column for 'users' table
+        # Mask password using TextColumn type="password"
         if selected_table == "users":
-            column_config["password"] = st.column_config.PasswordColumn("Password")
+            column_config["password"] = st.column_config.TextColumn("Password", type="password")
         elif selected_table == "overtime_requests":
             column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
         elif selected_table == "transit_groups":
