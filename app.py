@@ -51,7 +51,7 @@ def init_db():
         )
     ''')
     
-    # 3. overtime_requests table (plate_number removed)
+    # 3. overtime_requests table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +91,7 @@ def init_db():
         )
     ''')
 
-    # 6. fleet_drivers table (Vehicle field added)
+    # 6. fleet_drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -428,8 +428,6 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            # Formats summary strictly in required format:
-            # Vehicle, Plate Number, Driver, Driver Mobile No, Passenger Name, From (etd_1), To (Etd_2)
             summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
@@ -550,6 +548,76 @@ with tab3:
     else:
         st.header("Admin Control Dashboard Engine")
         
+        # --- NEW DATA IMPORT SECTION ---
+        st.markdown("---")
+        st.subheader("📤 Bulk Import Data via CSV / Excel")
+        
+        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers"], key="import_tbl_sel")
+        
+        # Schema definition mapping for import templates
+        table_schemas = {
+            "users": ["username", "password", "role", "email_recipients", "emp_name"],
+            "holidays": ["holiday_date", "description"],
+            "fleet_drivers": ["driver_name", "driver_mobile", "plate_number", "vehicle"]
+        }
+        
+        req_cols = table_schemas[import_table]
+        st.caption(f"ℹ️ **Required CSV/Excel Headers for `{import_table}`:** `{', '.join(req_cols)}`")
+        
+        # Generate downloadable template
+        template_df = pd.DataFrame(columns=req_cols)
+        template_csv = template_df.to_csv(index=False).encode('utf-8')
+        
+        st.download_button(
+            label=f"📥 Download CSV Template for {import_table}",
+            data=template_csv,
+            file_name=f"{import_table}_import_template.csv",
+            mime="text/csv"
+        )
+        
+        uploaded_file = st.file_uploader(f"Upload CSV or Excel file for '{import_table}'", type=["csv", "xlsx"])
+        
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    import_df = pd.read_csv(uploaded_file)
+                else:
+                    import_df = pd.read_excel(uploaded_file)
+                
+                # Normalize column headers to lowercase
+                import_df.columns = [str(c).strip().lower() for c in import_df.columns]
+                
+                # Check for missing required columns
+                missing_cols = [c for c in req_cols if c not in import_df.columns]
+                
+                if missing_cols:
+                    st.error(f"❌ File missing required column headers: `{', '.join(missing_cols)}`")
+                else:
+                    st.write("🔍 **Preview Import File Data:**")
+                    st.dataframe(import_df[req_cols], use_container_width=True)
+                    
+                    if st.button(f"🚀 Import {len(import_df)} Records into '{import_table}'"):
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        
+                        placeholders = ", ".join(["?"] * len(req_cols))
+                        cols_str = ", ".join(req_cols)
+                        
+                        success_count = 0
+                        for _, row in import_df.iterrows():
+                            vals = [None if pd.isna(row[c]) else str(row[c]).strip() for c in req_cols]
+                            # INSERT OR REPLACE handles primary key updates cleanly
+                            cursor.execute(f"INSERT OR REPLACE INTO {import_table} ({cols_str}) VALUES ({placeholders})", vals)
+                            success_count += 1
+                            
+                        conn.commit()
+                        conn.close()
+                        st.success(f"🎉 Successfully imported/updated {success_count} records in `{import_table}`!")
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Error processing file: {str(e)}")
+
+        # --- EXISTING INLINE CRUD DATA EDITOR ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "transit_passengers", "daily_transit"]
