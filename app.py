@@ -2,16 +2,26 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import io
-import requests
+import urllib.parse
 from datetime import datetime, date, timedelta, time
 
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
 # ==============================================================================
-# ⚙️ 1. SELF-CONTAINED DATABASE ENGINE
+# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
+
+def generate_whatsapp_link(phone_number, text):
+    """Generates a pre-filled WhatsApp click-to-chat URL."""
+    clean_phone = phone_number.replace("+", "").replace(" ", "").replace("-", "") if phone_number else ""
+    encoded_text = urllib.parse.quote(text)
+    if clean_phone:
+        return f"https://wa.me/{clean_phone}?text={encoded_text}"
+    else:
+        # Opens WhatsApp share menu if no specific phone number is provided
+        return f"https://api.whatsapp.com/send?text={encoded_text}"
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -88,7 +98,7 @@ def init_db():
         )
     ''')
 
-    # New Table Structure: group_date removed from transit_groups
+    # Transit groups without group_date
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,7 +110,7 @@ def init_db():
         )
     ''')
 
-    # New Junction Table: daily_transit
+    # Junction Table: daily_transit
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,12 +139,11 @@ def init_db():
 
 init_db()
 
-# Ensure schema handles migration for new daily_transit structure
+# Schema migration for transition from old schema to daily_transit
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Check if old table has group_date
     cursor.execute("PRAGMA table_info(transit_groups)")
     columns = [col[1] for col in cursor.fetchall()]
     
@@ -274,8 +283,20 @@ with tab1:
         conn.close()
         
         st.success("🎉 Overtime log successfully submitted!")
-        if user_info and user_info['email_recipients']:
-            st.info(f"📧 Notification pushed to predetermined dispatch recipients: **{user_info['email_recipients']}**")
+        
+        # WhatsApp Share Option for Driver
+        if needs_transport and driver_mobile:
+            ot_msg = (
+                f"🚗 *NEW OVERTIME TRANSPORT REQUEST*\n"
+                f"👤 *Passenger:* {st.session_state.username}\n"
+                f"📅 *Date:* {date_str}\n"
+                f"⏰ *OT Hours:* {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}\n"
+                f"📍 *Route:* {origin} ➡️ {destination}\n"
+                f"🚘 *Car/Plate:* {plate_number}\n"
+                f"🛫 *Est. Departure:* {dep_time}"
+            )
+            wa_driver_url = generate_whatsapp_link(driver_mobile, ot_msg)
+            st.link_button("📲 Notify Driver via WhatsApp", wa_driver_url)
 
     st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
@@ -347,8 +368,24 @@ with tab1_b:
                     
                     conn.commit()
                     conn.close()
-                    st.success("🎉 Transportation group and daily transit schedule created successfully.")
-                    st.rerun()
+                    st.success("🎉 Transportation group created successfully.")
+                    
+                    # Generate WhatsApp Share Buttons
+                    wa_transit_text = (
+                        f"🚌 *DAILY TRANSIT SCHEDULE ({tg_date_str})*\n"
+                        f"👤 *Driver:* {selected_tg_driver} ({tg_d_info['plate_number']})\n"
+                        f"⏰ *ETD 1:* {create_etd_1} | *ETD 2:* {create_etd_2}\n"
+                        f"👥 *Passengers:* {passenger_input.strip()}"
+                    )
+                    
+                    # Direct link to driver's WhatsApp
+                    wa_driver_link = generate_whatsapp_link(tg_d_info['driver_mobile'], wa_transit_text)
+                    st.link_button("📲 Send Schedule Direct to Driver via WhatsApp", wa_driver_link)
+                    
+                    # General link to share to any WhatsApp Group
+                    wa_group_link = generate_whatsapp_link("", wa_transit_text)
+                    st.link_button("📢 Share Schedule to WhatsApp Group", wa_group_link)
+                    
                 else:
                     st.error("Please add at least one passenger name.")
         else:
@@ -436,18 +473,29 @@ with tab1_b:
         st.markdown(f"Records found for **{filter_date_str}**:")
         st.dataframe(filtered_transit_df, use_container_width=True)
         
-        buffer_tg = io.BytesIO()
-        with pd.ExcelWriter(buffer_tg, engine='openpyxl') as writer:
-            filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit {filter_date_str}")
-        excel_data_tg = buffer_tg.getvalue()
+        # WhatsApp Share button for the daily summary table
+        summary_text = f"📋 *TRANSIT SUMMARY FOR {filter_date_str}*\n\n"
+        for idx, row in filtered_transit_df.iterrows():
+            summary_text += f"🚘 *Car:* {row['driver_name']} ({row['plate_number']})\n⏰ ETD 1: {row['etd_1']} | ETD 2: {row['etd_2']}\n👥 {row['passengers']}\n---\n"
+            
+        wa_summary_link = generate_whatsapp_link("", summary_text)
         
-        st.download_button(
-            label=f"📥 Download {filter_date_str} Transit Groups as Excel (.xlsx)",
-            data=excel_data_tg,
-            file_name=f"Transit_Groups_{filter_date_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_dl_date_excel"
-        )
+        col_dl, col_wa = st.columns(2)
+        with col_dl:
+            buffer_tg = io.BytesIO()
+            with pd.ExcelWriter(buffer_tg, engine='openpyxl') as writer:
+                filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit {filter_date_str}")
+            excel_data_tg = buffer_tg.getvalue()
+            
+            st.download_button(
+                label=f"📥 Download {filter_date_str} Transit Groups as Excel (.xlsx)",
+                data=excel_data_tg,
+                file_name=f"Transit_Groups_{filter_date_str}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="btn_dl_date_excel"
+            )
+        with col_wa:
+            st.link_button("📢 Share Entire Day's Schedule to WhatsApp Group", wa_summary_link)
     else:
         st.info(f"No custom transportation groups scheduled for {filter_date_str} yet.")
         
@@ -531,8 +579,6 @@ with tab2:
                 user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
                 conn.commit()
                 st.success(f"🎉 Room assignment established successfully across {len(target_dates)} calendar intervals!")
-                if user_info and user_info['email_recipients']:
-                    st.info(f"📧 Notification logs dispatched to: **{user_info['email_recipients']}**")
             conn.close()
 
     st.subheader("📊 Master Room Allocation Schedules")
