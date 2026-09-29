@@ -428,7 +428,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
@@ -611,7 +611,7 @@ with tab3:
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
 
-        # --- INLINE CRUD DATA EDITOR WITH MASKED PASSWORDS ---
+        # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "transit_passengers", "daily_transit"]
@@ -620,17 +620,20 @@ with tab3:
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
         
+        # Keep track of original passwords for 'users' table
+        original_passwords = {}
+        if selected_table == "users":
+            original_passwords = dict(zip(table_df["username"], table_df["password"]))
+            # Visually mask passwords in display table
+            table_df["password"] = "••••••••"
+
         drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
         groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
         conn.close()
         
         column_config = {}
-        
-        # Mask password using TextColumn type="password"
-        if selected_table == "users":
-            column_config["password"] = st.column_config.TextColumn("Password", type="password")
-        elif selected_table == "overtime_requests":
+        if selected_table == "overtime_requests":
             column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
         elif selected_table == "transit_groups":
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
@@ -651,8 +654,16 @@ with tab3:
             cursor.execute(f"DELETE FROM {selected_table}")
             
             for _, row in edited_df.iterrows():
-                columns = [k for k in row.keys() if row[k] is not None]
-                values = [row[k] for k in columns]
+                row_dict = row.to_dict()
+                
+                # Restore unedited masked passwords for 'users'
+                if selected_table == "users":
+                    u_name = row_dict.get("username")
+                    if row_dict.get("password") == "••••••••":
+                        row_dict["password"] = original_passwords.get(u_name, "")
+                
+                columns = [k for k in row_dict.keys() if row_dict[k] is not None]
+                values = [row_dict[k] for k in columns]
                 placeholders = ", ".join(["?"] * len(columns))
                 col_names = ", ".join(columns)
                 
