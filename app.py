@@ -20,7 +20,6 @@ def generate_whatsapp_link(phone_number, text):
     if clean_phone:
         return f"https://wa.me/{clean_phone}?text={encoded_text}"
     else:
-        # Opens WhatsApp share menu if no specific phone number is provided
         return f"https://api.whatsapp.com/send?text={encoded_text}"
 
 def get_db_connection():
@@ -33,15 +32,18 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # 1. users table with emp_name
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             password TEXT NOT NULL,
             role TEXT NOT NULL,
-            email_recipients TEXT
+            email_recipients TEXT,
+            emp_name TEXT
         )
     ''')
     
+    # 2. holidays table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holidays (
             holiday_date TEXT PRIMARY KEY,
@@ -49,6 +51,7 @@ def init_db():
         )
     ''')
     
+    # 3. overtime_requests table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +71,7 @@ def init_db():
         )
     ''')
     
+    # 4. meeting_rooms table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meeting_rooms (
             room_number TEXT PRIMARY KEY,
@@ -77,6 +81,7 @@ def init_db():
         )
     ''')
     
+    # 5. room_bookings table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS room_bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +95,7 @@ def init_db():
         )
     ''')
 
+    # 6. fleet_drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -98,31 +104,42 @@ def init_db():
         )
     ''')
 
-    # Transit groups without group_date
+    # 7. transit_groups table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_name TEXT UNIQUE NOT NULL,
             driver_name TEXT,
-            plate_number TEXT,
-            passengers TEXT,
             etd_1 TEXT,
-            etd_2 TEXT
+            etd_2 TEXT,
+            FOREIGN KEY (driver_name) REFERENCES fleet_drivers(driver_name) ON DELETE SET NULL
         )
     ''')
 
-    # Junction Table: daily_transit
+    # 8. transit_passengers table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transit_passengers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_name TEXT NOT NULL,
+            passengers TEXT NOT NULL,
+            FOREIGN KEY (group_name) REFERENCES transit_groups(group_name) ON DELETE CASCADE
+        )
+    ''')
+
+    # 9. daily_transit table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             transit_date TEXT NOT NULL,
-            transit_group_id INTEGER NOT NULL,
-            FOREIGN KEY (transit_group_id) REFERENCES transit_groups (id) ON DELETE CASCADE
+            group_name TEXT NOT NULL,
+            FOREIGN KEY (group_name) REFERENCES transit_groups(group_name) ON DELETE CASCADE
         )
     ''')
     
+    # Seed Admin user if not exists
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
+        cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone()[0] == 0:
@@ -139,35 +156,16 @@ def init_db():
 
 init_db()
 
-# Schema migration for transition from old schema to daily_transit
+# Schema migration helper
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("PRAGMA table_info(transit_groups)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if "group_date" in columns:
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transit_groups_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                driver_name TEXT,
-                plate_number TEXT,
-                passengers TEXT,
-                etd_1 TEXT,
-                etd_2 TEXT
-            )
-        ''')
-        cursor.execute('''
-            INSERT INTO transit_groups_new (id, driver_name, plate_number, passengers, etd_1, etd_2)
-            SELECT id, driver_name, plate_number, passengers, etd_1, etd_2 FROM transit_groups
-        ''')
-        cursor.execute('''
-            INSERT INTO daily_transit (transit_date, transit_group_id)
-            SELECT group_date, id FROM transit_groups WHERE group_date IS NOT NULL
-        ''')
-        cursor.execute("DROP TABLE transit_groups")
-        cursor.execute("ALTER TABLE transit_groups_new RENAME TO transit_groups")
+    # Add emp_name column to users if missing
+    cursor.execute("PRAGMA table_info(users)")
+    user_cols = [col[1] for col in cursor.fetchall()]
+    if "emp_name" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN emp_name TEXT")
         conn.commit()
 
     conn.close()
@@ -215,9 +213,10 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.role = ""
     st.rerun()
 
-tabs = ["⏰ Overtime & Transport", "👥 Daily Transit Groups", "📅 Meeting Room Booking", "🛠️ System Administration"]
-tab1, tab1_b, tab2, tab3 = st.tabs(tabs)
+tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "🛠️ System Administration"]
+tab1, tab1_b, tab1_c, tab2, tab3 = st.tabs(tabs)
 
+# --- TAB 1: OVERTIME REQUESTS ---
 with tab1:
     st.header("Request Overtime & Logistics Tracking")
     
@@ -237,11 +236,11 @@ with tab1:
         if is_sunday or is_holiday:
             default_start = time(7, 0)
             default_end = time(15, 0)
-            st.caption("ℹ️ Automatic Rule Applied: **Sunday/Holiday (07:00 - 15:00)** baseline.")
+            st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
             default_start = time(17, 30)
             default_end = time(19, 0)
-            st.caption("ℹ️ Automatic Rule Applied: **Weekday/Saturday (17:30 - 19:00)** baseline.")
+            st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=default_end)
@@ -284,7 +283,6 @@ with tab1:
         
         st.success("🎉 Overtime log successfully submitted!")
         
-        # WhatsApp Share Option for Driver
         if needs_transport and driver_mobile:
             ot_msg = (
                 f"🚗 *NEW OVERTIME TRANSPORT REQUEST*\n"
@@ -308,201 +306,140 @@ with tab1:
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
-        
-        buffer_ot = io.BytesIO()
-        with pd.ExcelWriter(buffer_ot, engine='openpyxl') as writer:
-            ot_df.to_excel(writer, index=False, sheet_name="Overtime Report")
-        excel_data_ot = buffer_ot.getvalue()
-        
-        st.download_button(
-            label="📥 Download Overtime History as Excel (.xlsx)",
-            data=excel_data_ot,
-            file_name=f"Overtime_Report_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
-# --- TAB 1B: DAILY TRANSIT GROUPS DESK ---
+# --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
 with tab1_b:
-    st.header("👥 Daily Transportation Grouping & Transfers Desk")
-    
-    group_col1, group_col2 = st.columns(2)
-    
-    with group_col1:
-        st.subheader("➕ Create Daily Transit Group")
-        target_group_date = st.date_input("Select Transit Date", value=date.today(), key="tg_date")
-        tg_date_str = target_group_date.strftime("%Y-%m-%d")
-        
-        conn = get_db_connection()
-        drivers_list = conn.execute("SELECT * FROM fleet_drivers").fetchall()
-        conn.close()
-        
-        if drivers_list:
-            d_options = [d['driver_name'] for d in drivers_list]
-            selected_tg_driver = st.selectbox("Assign Driver", d_options, key="tg_driver")
-            
-            conn = get_db_connection()
-            tg_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (selected_tg_driver,)).fetchone()
-            conn.close()
-            
-            st.text(f"Automated Car Plate: {tg_d_info['plate_number']}")
-            
-            create_etd_1 = st.text_input("ETD 1", value="05:45")
-            create_etd_2 = st.text_input("ETD 2", value="17:30")
-            passenger_input = st.text_area("Passengers List (Separate names with commas)", placeholder="John, Alice, Bob")
-            
-            if st.button("Provision Transit Group"):
-                if passenger_input.strip():
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO transit_groups (driver_name, plate_number, passengers, etd_1, etd_2)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (selected_tg_driver, tg_d_info['plate_number'], passenger_input.strip(), create_etd_1, create_etd_2))
-                    
-                    new_group_id = cursor.lastrowid
-                    
-                    cursor.execute('''
-                        INSERT INTO daily_transit (transit_date, transit_group_id)
-                        VALUES (?, ?)
-                    ''', (tg_date_str, new_group_id))
-                    
-                    conn.commit()
-                    conn.close()
-                    st.success("🎉 Transportation group created successfully.")
-                    
-                    # Generate WhatsApp Share Buttons
-                    wa_transit_text = (
-                        f"🚌 *DAILY TRANSIT SCHEDULE ({tg_date_str})*\n"
-                        f"👤 *Driver:* {selected_tg_driver} ({tg_d_info['plate_number']})\n"
-                        f"⏰ *ETD 1:* {create_etd_1} | *ETD 2:* {create_etd_2}\n"
-                        f"👥 *Passengers:* {passenger_input.strip()}"
-                    )
-                    
-                    # Direct link to driver's WhatsApp
-                    wa_driver_link = generate_whatsapp_link(tg_d_info['driver_mobile'], wa_transit_text)
-                    st.link_button("📲 Send Schedule Direct to Driver via WhatsApp", wa_driver_link)
-                    
-                    # General link to share to any WhatsApp Group
-                    wa_group_link = generate_whatsapp_link("", wa_transit_text)
-                    st.link_button("📢 Share Schedule to WhatsApp Group", wa_group_link)
-                    
-                else:
-                    st.error("Please add at least one passenger name.")
-        else:
-            st.warning("No fleet drivers configured.")
-
-    with group_col2:
-        st.subheader("🔄 Edit Passengers / Inter-Car Transfers")
-        conn = get_db_connection()
-        active_groups = conn.execute('''
-            SELECT dt.id AS daily_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.passengers, tg.etd_1, tg.etd_2
-            FROM daily_transit dt
-            JOIN transit_groups tg ON dt.transit_group_id = tg.id
-        ''').fetchall()
-        conn.close()
-        
-        if active_groups:
-            group_options = {f"Schedule #{g['daily_id']} | Date: {g['transit_date']} | Group #{g['group_id']} | Driver: {g['driver_name']}": g for g in active_groups}
-            selected_group_label = st.selectbox("Select Active Schedule to Modify", list(group_options.keys()))
-            selected_item = group_options[selected_group_label]
-            
-            conn = get_db_connection()
-            drivers_edit_list = conn.execute("SELECT * FROM fleet_drivers").fetchall()
-            conn.close()
-            
-            edit_date = st.date_input("Modify Transit Date", value=datetime.strptime(selected_item['transit_date'], "%Y-%m-%d").date())
-            edit_passengers = st.text_area("Modify Passenger List (Comma separated)", value=selected_item['passengers'])
-            edit_etd_1 = st.text_input("Modify ETD 1", value=selected_item['etd_1'])
-            edit_etd_2 = st.text_input("Modify ETD 2", value=selected_item['etd_2'])
-            
-            edit_d_options = [d['driver_name'] for d in drivers_edit_list]
-            try:
-                current_d_idx = edit_d_options.index(selected_item['driver_name'])
-            except ValueError:
-                current_d_idx = 0
-                
-            transfer_driver = st.selectbox("Transfer to Driver", edit_d_options, index=current_d_idx)
-            
-            conn = get_db_connection()
-            tr_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (transfer_driver,)).fetchone()
-            conn.close()
-            
-            if st.button("Save Transit Group Revisions"):
-                conn = get_db_connection()
-                conn.execute('''
-                    UPDATE transit_groups 
-                    SET passengers = ?, driver_name = ?, plate_number = ?, etd_1 = ?, etd_2 = ?
-                    WHERE id = ?
-                ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], edit_etd_1, edit_etd_2, selected_item['group_id']))
-                
-                conn.execute('''
-                    UPDATE daily_transit
-                    SET transit_date = ?
-                    WHERE id = ?
-                ''', (edit_date.strftime("%Y-%m-%d"), selected_item['daily_id']))
-                
-                conn.commit()
-                conn.close()
-                st.success("🎉 Group passenger allocations and schedules updated seamlessly.")
-                st.rerun()
-        else:
-            st.info("No transportation groups have been scheduled yet.")
-
-    st.markdown("---")
-    st.subheader("📊 Filter & Export Daily Transit Groups per Date")
-    
-    filter_export_date = st.date_input("Select Date to Export to Excel", value=date.today(), key="filter_export_date")
-    filter_date_str = filter_export_date.strftime("%Y-%m-%d")
+    st.header("👥 Transit Groups & Passengers Management")
     
     conn = get_db_connection()
-    filtered_transit_df = pd.read_sql_query('''
-        SELECT dt.id AS daily_transit_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.plate_number, tg.passengers, tg.etd_1, tg.etd_2
-        FROM daily_transit dt
-        JOIN transit_groups tg ON dt.transit_group_id = tg.id
-        WHERE dt.transit_date = ?
-    ''', conn, params=[filter_date_str])
+    drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+    employees_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
+    groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+    conn.close()
+
+    col1, col2 = st.columns(2)
     
-    all_transit_df = pd.read_sql_query('''
-        SELECT dt.id AS daily_transit_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.plate_number, tg.passengers, tg.etd_1, tg.etd_2
-        FROM daily_transit dt
-        JOIN transit_groups tg ON dt.transit_group_id = tg.id
+    # Section A: Define Transit Groups
+    with col1:
+        st.subheader("1. Create Transit Group")
+        g_name = st.text_input("Group Name (e.g., Alpha Shuttles, Route 1)", key="g_name_input")
+        selected_driver = st.selectbox("Assign Driver (from Fleet Drivers)", drivers_list if drivers_list else ["No drivers available"])
+        etd_1 = st.text_input("ETD 1", value="05:45")
+        etd_2 = st.text_input("ETD 2", value="17:30")
+        
+        if st.button("Save Transit Group"):
+            if g_name.strip() and selected_driver != "No drivers available":
+                try:
+                    conn = get_db_connection()
+                    conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)",
+                                 (g_name.strip(), selected_driver, etd_1, etd_2))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Group '{g_name}' created successfully!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("A group with this name already exists.")
+            else:
+                st.error("Please provide a valid Group Name and select a Driver.")
+
+    # Section B: Assign Passengers to Transit Groups
+    with col2:
+        st.subheader("2. Assign Passengers to Group")
+        if groups_list and employees_list:
+            selected_group_for_p = st.selectbox("Select Group Name (from Transit Groups)", groups_list, key="p_group_select")
+            selected_passengers = st.multiselect("Select Passenger(s) (from User Employee Names)", employees_list)
+            
+            if st.button("Assign Passengers to Group"):
+                if selected_passengers:
+                    conn = get_db_connection()
+                    for passenger in selected_passengers:
+                        conn.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (?, ?)",
+                                     (selected_group_for_p, passenger))
+                    conn.commit()
+                    conn.close()
+                    st.success("Passengers added successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please select at least one passenger.")
+        else:
+            st.info("Ensure Transit Groups are created and Users have 'emp_name' populated.")
+
+    st.markdown("---")
+    st.subheader("📋 Configured Groups & Assigned Passengers")
+    conn = get_db_connection()
+    groups_df = pd.read_sql_query('''
+        SELECT tg.id, tg.group_name, tg.driver_name, fd.plate_number, fd.driver_mobile, tg.etd_1, tg.etd_2,
+               GROUP_CONCAT(tp.passengers, ', ') AS passengers
+        FROM transit_groups tg
+        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        GROUP BY tg.id
     ''', conn)
     conn.close()
     
-    if not filtered_transit_df.empty:
-        st.markdown(f"Records found for **{filter_date_str}**:")
-        st.dataframe(filtered_transit_df, use_container_width=True)
+    if not groups_df.empty:
+        st.dataframe(groups_df, use_container_width=True)
+
+# --- TAB 1C: DAILY TRANSIT DISPATCH ---
+with tab1_c:
+    st.header("📅 Daily Transit Dispatch Schedule")
+    
+    conn = get_db_connection()
+    available_groups = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+    conn.close()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Schedule Group for Date")
+        dispatch_date = st.date_input("Select Transit Date", value=date.today())
+        disp_date_str = dispatch_date.strftime("%Y-%m-%d")
         
-        # WhatsApp Share button for the daily summary table
-        summary_text = f"📋 *TRANSIT SUMMARY FOR {filter_date_str}*\n\n"
-        for idx, row in filtered_transit_df.iterrows():
-            summary_text += f"🚘 *Car:* {row['driver_name']} ({row['plate_number']})\n⏰ ETD 1: {row['etd_1']} | ETD 2: {row['etd_2']}\n👥 {row['passengers']}\n---\n"
+        if available_groups:
+            selected_dispatch_group = st.selectbox("Select Group Name to Dispatch", available_groups, key="disp_group_sel")
             
-        wa_summary_link = generate_whatsapp_link("", summary_text)
-        
-        col_dl, col_wa = st.columns(2)
-        with col_dl:
-            buffer_tg = io.BytesIO()
-            with pd.ExcelWriter(buffer_tg, engine='openpyxl') as writer:
-                filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit {filter_date_str}")
-            excel_data_tg = buffer_tg.getvalue()
+            if st.button("Schedule Daily Transit"):
+                conn = get_db_connection()
+                conn.execute("INSERT INTO daily_transit (transit_date, group_name) VALUES (?, ?)",
+                             (disp_date_str, selected_dispatch_group))
+                conn.commit()
+                conn.close()
+                st.success(f"Group '{selected_dispatch_group}' scheduled for {disp_date_str}!")
+                st.rerun()
+        else:
+            st.warning("No Transit Groups created yet.")
             
-            st.download_button(
-                label=f"📥 Download {filter_date_str} Transit Groups as Excel (.xlsx)",
-                data=excel_data_tg,
-                file_name=f"Transit_Groups_{filter_date_str}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="btn_dl_date_excel"
-            )
-        with col_wa:
-            st.link_button("📢 Share Entire Day's Schedule to WhatsApp Group", wa_summary_link)
-    else:
-        st.info(f"No custom transportation groups scheduled for {filter_date_str} yet.")
+    with col2:
+        st.subheader("📢 Share Schedule")
+        filter_date = st.date_input("Filter Schedule Date", value=date.today(), key="filter_sched_date")
+        filter_date_str = filter_date.strftime("%Y-%m-%d")
         
+        conn = get_db_connection()
+        daily_df = pd.read_sql_query('''
+            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name, tg.driver_name, fd.plate_number, fd.driver_mobile,
+                   tg.etd_1, tg.etd_2, GROUP_CONCAT(tp.passengers, ', ') AS passengers
+            FROM daily_transit dt
+            JOIN transit_groups tg ON dt.group_name = tg.group_name
+            LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+            LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+            WHERE dt.transit_date = ?
+            GROUP BY dt.id
+        ''', conn, params=[filter_date_str])
+        conn.close()
+        
+        if not daily_df.empty:
+            summary_text = f"📋 *TRANSIT DISPATCH SCHEDULE ({filter_date_str})*\n\n"
+            for _, row in daily_df.iterrows():
+                summary_text += f"🚌 *Group:* {row['group_name']}\n🚘 *Driver:* {row['driver_name']} ({row['plate_number']})\n⏰ ETD 1: {row['etd_1']} | ETD 2: {row['etd_2']}\n👥 Passengers: {row['passengers']}\n---\n"
+                
+            wa_link = generate_whatsapp_link("", summary_text)
+            st.link_button("📢 Share Schedule to WhatsApp Group", wa_link)
+
     st.markdown("---")
-    st.markdown("**All Recorded Groups Log Matrix:**")
-    if not all_transit_df.empty:
-        st.dataframe(all_transit_df, use_container_width=True)
+    st.subheader(f"📊 Scheduled Dispatches for {disp_date_str}")
+    if not daily_df.empty:
+        st.dataframe(daily_df, use_container_width=True)
+    else:
+        st.info("No transit groups scheduled for this date.")
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
@@ -528,10 +465,10 @@ with tab2:
         with col2:
             recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
             max_rec_end = date.today() + timedelta(days=180) 
-            recurrence_end = st.date_input("Recurrence End Horizon Target (Max 6 Months Limit)", value=book_date + timedelta(days=7))
+            recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
-                st.error("⚠️ Rule Restriction Failure: System parameters block automated room recurrence from exceeding a maximum limit of 6 months.")
+                st.error("⚠️ Max 6 months recurrence limit exceeded.")
                 st.stop()
 
         if st.button("Confirm Room Block Assignment"):
@@ -564,7 +501,7 @@ with tab2:
                 ''', (selected_room_num, t_date_str, b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchall()
                 
                 if conflicts:
-                    st.error(f"❌ Schedule Collision Error! Room {selected_room_num} is already reserved on {t_date_str} during those hours.")
+                    st.error(f"❌ Schedule Collision on {t_date_str}!")
                     conflict_detected = True
                     break
             
@@ -576,9 +513,8 @@ with tab2:
                     ''', (selected_room_num, st.session_state.username, t_date.strftime("%Y-%m-%d"), 
                           b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
                 
-                user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
                 conn.commit()
-                st.success(f"🎉 Room assignment established successfully across {len(target_dates)} calendar intervals!")
+                st.success(f"🎉 Room reserved across {len(target_dates)} intervals!")
             conn.close()
 
     st.subheader("📊 Master Room Allocation Schedules")
@@ -592,38 +528,41 @@ with tab2:
     
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
-        
-        buffer_bk = io.BytesIO()
-        with pd.ExcelWriter(buffer_bk, engine='openpyxl') as writer:
-            bookings_df.to_excel(writer, index=False, sheet_name="Schedules Report")
-        excel_data_bk = buffer_bk.getvalue()
-        
-        st.download_button(
-            label="📥 Download Calendar Agenda as Excel (.xlsx)",
-            data=excel_data_bk,
-            file_name=f"Meeting_Room_Schedules_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
     if st.session_state.role != "Admin":
-        st.error("🛡️ Restricted Access Control: You lack administrative clearing profiles to view these configuration matrices.")
+        st.error("🛡️ Restricted Access Control: Admin clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor (Admin Only)")
-        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "daily_transit"]
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
+        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
+        
+        # Helper lists for dynamic dropdown configuration in st.data_editor
+        drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+        groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+        emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
         conn.close()
         
-        st.markdown("💡 *Double-click cells to Edit. Click '+' at the bottom of the grid to Add new rows.*")
+        # Configure selectbox columns for specific tables
+        column_config = {}
+        if selected_table == "transit_groups":
+            column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
+        elif selected_table == "transit_passengers":
+            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
+            column_config["passengers"] = st.column_config.SelectboxColumn("Passenger", options=emp_list)
+        elif selected_table == "daily_transit":
+            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
+
+        st.markdown("💡 *Edit cells or use dropdowns where configured. Click '+' to add rows.*")
         
-        edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_table}")
+        edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, column_config=column_config, key=f"editor_{selected_table}")
         
         if st.button(f"Save Grid Changes to Database ({selected_table})"):
             conn = get_db_connection()
@@ -641,5 +580,5 @@ with tab3:
                 
             conn.commit()
             conn.close()
-            st.success(f"🎉 Changes synchronized with '{selected_table}' successfully!")
+            st.success(f"🎉 Database '{selected_table}' updated successfully!")
             st.rerun()
