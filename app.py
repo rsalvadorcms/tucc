@@ -548,9 +548,9 @@ with tab3:
     else:
         st.header("Admin Control Dashboard Engine")
         
-        # --- NEW DATA IMPORT SECTION ---
+        # --- EXCEL DATA IMPORT SECTION ---
         st.markdown("---")
-        st.subheader("📤 Bulk Import Data via CSV / Excel")
+        st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
         
         import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers"], key="import_tbl_sel")
         
@@ -562,27 +562,27 @@ with tab3:
         }
         
         req_cols = table_schemas[import_table]
-        st.caption(f"ℹ️ **Required CSV/Excel Headers for `{import_table}`:** `{', '.join(req_cols)}`")
+        st.caption(f"ℹ️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
         
-        # Generate downloadable template
+        # Generate downloadable Excel template
+        buffer_template = io.BytesIO()
         template_df = pd.DataFrame(columns=req_cols)
-        template_csv = template_df.to_csv(index=False).encode('utf-8')
+        with pd.ExcelWriter(buffer_template, engine='openpyxl') as writer:
+            template_df.to_excel(writer, index=False, sheet_name=f"{import_table}_Template")
+        excel_template_bytes = buffer_template.getvalue()
         
         st.download_button(
-            label=f"📥 Download CSV Template for {import_table}",
-            data=template_csv,
-            file_name=f"{import_table}_import_template.csv",
-            mime="text/csv"
+            label=f"📥 Download Excel (.xlsx) Template for {import_table}",
+            data=excel_template_bytes,
+            file_name=f"{import_table}_import_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        uploaded_file = st.file_uploader(f"Upload CSV or Excel file for '{import_table}'", type=["csv", "xlsx"])
+        uploaded_file = st.file_uploader(f"Upload Excel file (.xlsx) for '{import_table}'", type=["xlsx", "xls"])
         
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith(".csv"):
-                    import_df = pd.read_csv(uploaded_file)
-                else:
-                    import_df = pd.read_excel(uploaded_file)
+                import_df = pd.read_excel(uploaded_file)
                 
                 # Normalize column headers to lowercase
                 import_df.columns = [str(c).strip().lower() for c in import_df.columns]
@@ -593,7 +593,7 @@ with tab3:
                 if missing_cols:
                     st.error(f"❌ File missing required column headers: `{', '.join(missing_cols)}`")
                 else:
-                    st.write("🔍 **Preview Import File Data:**")
+                    st.write("🔍 **Preview Import Excel Data:**")
                     st.dataframe(import_df[req_cols], use_container_width=True)
                     
                     if st.button(f"🚀 Import {len(import_df)} Records into '{import_table}'"):
@@ -617,7 +617,7 @@ with tab3:
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
 
-        # --- EXISTING INLINE CRUD DATA EDITOR ---
+        # --- INLINE CRUD DATA EDITOR WITH MASKED PASSWORDS ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "transit_passengers", "daily_transit"]
@@ -632,7 +632,11 @@ with tab3:
         conn.close()
         
         column_config = {}
-        if selected_table == "overtime_requests":
+        
+        # Mask password column for 'users' table
+        if selected_table == "users":
+            column_config["password"] = st.column_config.PasswordColumn("Password")
+        elif selected_table == "overtime_requests":
             column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
         elif selected_table == "transit_groups":
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
@@ -642,7 +646,7 @@ with tab3:
         elif selected_table == "daily_transit":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
 
-        st.markdown("💡 *Edit cells or use dropdowns where configured. Click '+' to add rows.*")
+        st.markdown("💡 *Edit cells or use dropdowns where configured. Passwords are masked.*")
         
         edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, column_config=column_config, key=f"editor_{selected_table}")
         
