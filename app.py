@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import io
+import requests
 from datetime import datetime, date, timedelta, time
 
 # Set page configurations with native default theme formatting
@@ -14,6 +15,7 @@ DB_FILE = "office_operations.db"
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -86,15 +88,25 @@ def init_db():
         )
     ''')
 
+    # New Table Structure: group_date removed from transit_groups
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_date TEXT,
             driver_name TEXT,
             plate_number TEXT,
             passengers TEXT,
             etd_1 TEXT,
             etd_2 TEXT
+        )
+    ''')
+
+    # New Junction Table: daily_transit
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS daily_transit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            transit_date TEXT NOT NULL,
+            transit_group_id INTEGER NOT NULL,
+            FOREIGN KEY (transit_group_id) REFERENCES transit_groups (id) ON DELETE CASCADE
         )
     ''')
     
@@ -103,12 +115,12 @@ def init_db():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com')")
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
-    if cursor.fetchone() == 0:
+    if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
         cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
 
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
-    if cursor.fetchone() == 0:
+    if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333', 'B 1234 ABC')")
         cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777', 'B 5678 XYZ')")
         
@@ -117,19 +129,38 @@ def init_db():
 
 init_db()
 
-# Ensure schema handles migration for etd fields
+# Ensure schema handles migration for new daily_transit structure
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT etd_1 FROM transit_groups LIMIT 1")
-    except sqlite3.OperationalError:
-        try:
-            cursor.execute("ALTER TABLE transit_groups ADD COLUMN etd_1 TEXT DEFAULT '05:45'")
-            cursor.execute("ALTER TABLE transit_groups ADD COLUMN etd_2 TEXT DEFAULT '17:30'")
-            conn.commit()
-        except Exception:
-            pass
+    
+    # Check if old table has group_date
+    cursor.execute("PRAGMA table_info(transit_groups)")
+    columns = [col[1] for col in cursor.fetchall()]
+    
+    if "group_date" in columns:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transit_groups_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                driver_name TEXT,
+                plate_number TEXT,
+                passengers TEXT,
+                etd_1 TEXT,
+                etd_2 TEXT
+            )
+        ''')
+        cursor.execute('''
+            INSERT INTO transit_groups_new (id, driver_name, plate_number, passengers, etd_1, etd_2)
+            SELECT id, driver_name, plate_number, passengers, etd_1, etd_2 FROM transit_groups
+        ''')
+        cursor.execute('''
+            INSERT INTO daily_transit (transit_date, transit_group_id)
+            SELECT group_date, id FROM transit_groups WHERE group_date IS NOT NULL
+        ''')
+        cursor.execute("DROP TABLE transit_groups")
+        cursor.execute("ALTER TABLE transit_groups_new RENAME TO transit_groups")
+        conn.commit()
+
     conn.close()
 
 run_migrations()
@@ -294,22 +325,29 @@ with tab1_b:
             
             st.text(f"Automated Car Plate: {tg_d_info['plate_number']}")
             
-            # Form field parameters for editable ETD entries
             create_etd_1 = st.text_input("ETD 1", value="05:45")
             create_etd_2 = st.text_input("ETD 2", value="17:30")
-            
             passenger_input = st.text_area("Passengers List (Separate names with commas)", placeholder="John, Alice, Bob")
             
             if st.button("Provision Transit Group"):
                 if passenger_input.strip():
                     conn = get_db_connection()
-                    conn.execute('''
-                        INSERT INTO transit_groups (group_date, driver_name, plate_number, passengers, etd_1, etd_2)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (tg_date_str, selected_tg_driver, tg_d_info['plate_number'], passenger_input.strip(), create_etd_1, create_etd_2))
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        INSERT INTO transit_groups (driver_name, plate_number, passengers, etd_1, etd_2)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (selected_tg_driver, tg_d_info['plate_number'], passenger_input.strip(), create_etd_1, create_etd_2))
+                    
+                    new_group_id = cursor.lastrowid
+                    
+                    cursor.execute('''
+                        INSERT INTO daily_transit (transit_date, transit_group_id)
+                        VALUES (?, ?)
+                    ''', (tg_date_str, new_group_id))
+                    
                     conn.commit()
                     conn.close()
-                    st.success("🎉 Transportation group created successfully.")
+                    st.success("🎉 Transportation group and daily transit schedule created successfully.")
                     st.rerun()
                 else:
                     st.error("Please add at least one passenger name.")
@@ -319,56 +357,59 @@ with tab1_b:
     with group_col2:
         st.subheader("🔄 Edit Passengers / Inter-Car Transfers")
         conn = get_db_connection()
-        active_groups = conn.execute("SELECT * FROM transit_groups").fetchall()
+        active_groups = conn.execute('''
+            SELECT dt.id AS daily_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.passengers, tg.etd_1, tg.etd_2
+            FROM daily_transit dt
+            JOIN transit_groups tg ON dt.transit_group_id = tg.id
+        ''').fetchall()
         conn.close()
         
         if active_groups:
-            group_options = {f"ID {g['id']} | {g['group_date']} | Driver: {g['driver_name']}": g['id'] for g in active_groups}
-            selected_group_label = st.selectbox("Select Active Group ID to Modify", list(group_options.keys()))
-            selected_group_id = group_options[selected_group_label]
+            group_options = {f"Schedule #{g['daily_id']} | Date: {g['transit_date']} | Group #{g['group_id']} | Driver: {g['driver_name']}": g for g in active_groups}
+            selected_group_label = st.selectbox("Select Active Schedule to Modify", list(group_options.keys()))
+            selected_item = group_options[selected_group_label]
             
             conn = get_db_connection()
-            selected_group = conn.execute("SELECT * FROM transit_groups WHERE id = ?", (selected_group_id,)).fetchone()
             drivers_edit_list = conn.execute("SELECT * FROM fleet_drivers").fetchall()
             conn.close()
             
-            if selected_group:
-                edit_passengers = st.text_area("Modify Passenger List (Comma separated)", value=selected_group['passengers'])
+            edit_date = st.date_input("Modify Transit Date", value=datetime.strptime(selected_item['transit_date'], "%Y-%m-%d").date())
+            edit_passengers = st.text_area("Modify Passenger List (Comma separated)", value=selected_item['passengers'])
+            edit_etd_1 = st.text_input("Modify ETD 1", value=selected_item['etd_1'])
+            edit_etd_2 = st.text_input("Modify ETD 2", value=selected_item['etd_2'])
+            
+            edit_d_options = [d['driver_name'] for d in drivers_edit_list]
+            try:
+                current_d_idx = edit_d_options.index(selected_item['driver_name'])
+            except ValueError:
+                current_d_idx = 0
                 
-                # Dynamic safe extraction checks for etd parameters preventing dictionary map crashes
-                current_keys = dict(selected_group).keys()
-                val_etd1 = selected_group['etd_1'] if 'etd_1' in current_keys else '05:45'
-                val_etd2 = selected_group['etd_2'] if 'etd_2' in current_keys else '17:30'
-                
-                edit_etd_1 = st.text_input("Modify ETD 1", value=val_etd1)
-                edit_etd_2 = st.text_input("Modify ETD 2", value=val_etd2)
-                
-                st.markdown("**Transfer Group Assignment to Another Driver/Car:**")
-                edit_d_options = [d['driver_name'] for d in drivers_edit_list]
-                try:
-                    current_d_idx = edit_d_options.index(selected_group['driver_name'])
-                except:
-                    current_d_idx = 0
-                    
-                transfer_driver = st.selectbox("Transfer to Driver", edit_d_options, index=current_d_idx)
-                
+            transfer_driver = st.selectbox("Transfer to Driver", edit_d_options, index=current_d_idx)
+            
+            conn = get_db_connection()
+            tr_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (transfer_driver,)).fetchone()
+            conn.close()
+            
+            if st.button("Save Transit Group Revisions"):
                 conn = get_db_connection()
-                tr_d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (transfer_driver,)).fetchone()
-                conn.close()
+                conn.execute('''
+                    UPDATE transit_groups 
+                    SET passengers = ?, driver_name = ?, plate_number = ?, etd_1 = ?, etd_2 = ?
+                    WHERE id = ?
+                ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], edit_etd_1, edit_etd_2, selected_item['group_id']))
                 
-                if st.button("Save Transit Group Revisions"):
-                    conn = get_db_connection()
-                    conn.execute('''
-                        UPDATE transit_groups 
-                        SET passengers = ?, driver_name = ?, plate_number = ?, etd_1 = ?, etd_2 = ?
-                        WHERE id = ?
-                    ''', (edit_passengers.strip(), transfer_driver, tr_d_info['plate_number'], edit_etd_1, edit_etd_2, selected_group_id))
-                    conn.commit()
-                    conn.close()
-                    st.success("🎉 Group passenger allocations updated seamlessly.")
-                    st.rerun()
+                conn.execute('''
+                    UPDATE daily_transit
+                    SET transit_date = ?
+                    WHERE id = ?
+                ''', (edit_date.strftime("%Y-%m-%d"), selected_item['daily_id']))
+                
+                conn.commit()
+                conn.close()
+                st.success("🎉 Group passenger allocations and schedules updated seamlessly.")
+                st.rerun()
         else:
-            st.info("No transportation groups have been created yet.")
+            st.info("No transportation groups have been scheduled yet.")
 
     st.markdown("---")
     st.subheader("📊 Filter & Export Daily Transit Groups per Date")
@@ -377,8 +418,18 @@ with tab1_b:
     filter_date_str = filter_export_date.strftime("%Y-%m-%d")
     
     conn = get_db_connection()
-    filtered_transit_df = pd.read_sql_query("SELECT * FROM transit_groups WHERE group_date = ?", conn, params=[filter_date_str])
-    all_transit_df = pd.read_sql_query("SELECT * FROM transit_groups", conn)
+    filtered_transit_df = pd.read_sql_query('''
+        SELECT dt.id AS daily_transit_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.plate_number, tg.passengers, tg.etd_1, tg.etd_2
+        FROM daily_transit dt
+        JOIN transit_groups tg ON dt.transit_group_id = tg.id
+        WHERE dt.transit_date = ?
+    ''', conn, params=[filter_date_str])
+    
+    all_transit_df = pd.read_sql_query('''
+        SELECT dt.id AS daily_transit_id, dt.transit_date, tg.id AS group_id, tg.driver_name, tg.plate_number, tg.passengers, tg.etd_1, tg.etd_2
+        FROM daily_transit dt
+        JOIN transit_groups tg ON dt.transit_group_id = tg.id
+    ''', conn)
     conn.close()
     
     if not filtered_transit_df.empty:
@@ -387,7 +438,7 @@ with tab1_b:
         
         buffer_tg = io.BytesIO()
         with pd.ExcelWriter(buffer_tg, engine='openpyxl') as writer:
-            filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit Groups {filter_date_str}")
+            filtered_transit_df.to_excel(writer, index=False, sheet_name=f"Transit {filter_date_str}")
         excel_data_tg = buffer_tg.getvalue()
         
         st.download_button(
@@ -517,7 +568,7 @@ with tab3:
         
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor (Admin Only)")
-        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups"]
+        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
         conn = get_db_connection()
