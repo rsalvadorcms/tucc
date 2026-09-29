@@ -5,6 +5,18 @@ import io
 import requests
 from datetime import datetime, date, timedelta, time
 
+import urllib.parse
+
+def generate_whatsapp_link(phone_number, text):
+    encoded_text = urllib.parse.quote(text)
+    # Formats to https://wa.me/628111222333?text=...
+    return f"https://wa.me/{phone_number.replace('+', '').replace(' ', '')}?text={encoded_text}"
+
+# Example Usage in Streamlit:
+msg = f"🚌 *Transit Group Schedule*\nDriver: {selected_tg_driver}\nPassengers: {passenger_input}"
+wa_url = generate_whatsapp_link(tg_d_info['driver_mobile'], msg)
+st.link_button("📲 Send Schedule via WhatsApp", wa_url)
+
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
