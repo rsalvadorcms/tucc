@@ -51,7 +51,7 @@ def init_db():
         )
     ''')
     
-    # 3. overtime_requests table
+    # 3. overtime_requests table (Updated Schema)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,11 +59,8 @@ def init_db():
             ot_date TEXT,
             start_time TEXT,
             end_time TEXT,
-            needs_transport INTEGER,
-            driver_name TEXT,
-            driver_mobile TEXT,
+            needs_transport TEXT DEFAULT 'Yes',
             plate_number TEXT,
-            route_type TEXT,
             origin TEXT,
             destination TEXT,
             departure_time TEXT,
@@ -156,12 +153,12 @@ def init_db():
 
 init_db()
 
-# Migration function to rebuild old schema tables automatically
+# Migration function to update overtime_requests table structure automatically
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Add emp_name column to users if missing
+    # Check users table
     cursor.execute("PRAGMA table_info(users)")
     user_cols = [col[1] for col in cursor.fetchall()]
     if "emp_name" not in user_cols:
@@ -178,6 +175,35 @@ def run_migrations():
         conn.close()
         init_db()
         return
+
+    # Check and migrate overtime_requests table if driver_name still exists
+    cursor.execute("PRAGMA table_info(overtime_requests)")
+    ot_cols = [col[1] for col in cursor.fetchall()]
+    if "driver_name" in ot_cols:
+        cursor.execute('''
+            CREATE TABLE overtime_requests_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT,
+                ot_date TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                needs_transport TEXT DEFAULT 'Yes',
+                plate_number TEXT,
+                origin TEXT,
+                destination TEXT,
+                departure_time TEXT,
+                return_time TEXT
+            )
+        ''')
+        cursor.execute('''
+            INSERT INTO overtime_requests_new (id, username, ot_date, start_time, end_time, needs_transport, plate_number, origin, destination, departure_time, return_time)
+            SELECT id, username, ot_date, start_time, end_time, 
+                   CASE WHEN needs_transport = 1 THEN 'Yes' ELSE 'No' END, 
+                   plate_number, origin, destination, departure_time, return_time
+            FROM overtime_requests
+        ''')
+        cursor.execute("DROP TABLE overtime_requests")
+        cursor.execute("ALTER TABLE overtime_requests_new RENAME TO overtime_requests")
 
     conn.commit()
     conn.close()
@@ -256,57 +282,49 @@ with tab1:
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=default_end)
-        needs_transport = st.checkbox("Require Individual Transportation Logistics?")
+        
+        # String dropdown defaulting to 'Yes'
+        needs_transport = st.selectbox("Require Individual Transportation Logistics?", ["Yes", "No"], index=0)
         
     with col2:
-        if needs_transport and drivers:
-            driver_options = [d['driver_name'] for d in drivers]
-            selected_driver = st.selectbox("Select Available Driver", driver_options)
+        if needs_transport == "Yes":
+            # Auto-calculate departure and return times for Sunday or Holiday
+            if is_sunday or is_holiday:
+                default_dep_time = start_time
+                default_ret_time = end_time
+                st.caption("ℹ️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
+            else:
+                default_dep_time = end_time
+                default_ret_time = time(23, 0)
             
-            conn = get_db_connection()
-            d_info = conn.execute("SELECT * FROM fleet_drivers WHERE driver_name = ?", (selected_driver,)).fetchone()
-            conn.close()
-            
-            driver_name = selected_driver
-            driver_mobile = st.text_input("Driver Mobile Phone Number", value=d_info['driver_mobile'])
-            plate_number = st.text_input("Car Plate Registration Number", value=d_info['plate_number'])
-            
-            route_type = st.selectbox("Route Assignment Context", ["Weekday work", "Sunday work", "Sunday shopping", "Holiday Duty"])
             origin = st.text_input("Origin Address", value="Main Corporate Office")
             destination = st.text_input("Target Destination")
-            dep_time = st.time_input("Departure Timeline Estimate", value=end_time)
-            ret_time = st.time_input("Return Timeline Estimate", value=time(23, 0))
+            
+            if drivers:
+                plate_options = [d['plate_number'] for d in drivers]
+                plate_number = st.selectbox("Select Car Plate Registration Number", plate_options)
+            else:
+                plate_number = st.text_input("Car Plate Registration Number")
+
+            dep_time = st.time_input("Departure Timeline Estimate", value=default_dep_time)
+            ret_time = st.time_input("Return Timeline Estimate", value=default_ret_time)
         else:
-            driver_name, driver_mobile, plate_number, route_type, origin, destination, dep_time, ret_time = ["", "", "", "", "", "", "", ""]
+            plate_number, origin, destination, dep_time, ret_time = ["", "", "", "", ""]
 
     if st.button("Submit New Overtime Request"):
         conn = get_db_connection()
         conn.execute('''
             INSERT INTO overtime_requests (username, ot_date, start_time, end_time, needs_transport, 
-            driver_name, driver_mobile, plate_number, route_type, origin, destination, departure_time, return_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            plate_number, origin, destination, departure_time, return_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (st.session_state.username, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"),
-              1 if needs_transport else 0, driver_name, driver_mobile, plate_number, route_type, origin, destination,
-              str(dep_time), str(ret_time)))
+              needs_transport, plate_number, origin, destination, str(dep_time), str(ret_time)))
         
         user_info = conn.execute("SELECT email_recipients FROM users WHERE username=?", (st.session_state.username,)).fetchone()
         conn.commit()
         conn.close()
         
         st.success("🎉 Overtime log successfully submitted!")
-        
-        if needs_transport and driver_mobile:
-            ot_msg = (
-                f"🚗 *NEW OVERTIME TRANSPORT REQUEST*\n"
-                f"👤 *Passenger:* {st.session_state.username}\n"
-                f"📅 *Date:* {date_str}\n"
-                f"⏰ *OT Hours:* {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}\n"
-                f"📍 *Route:* {origin} ➡️ {destination}\n"
-                f"🚘 *Car/Plate:* {plate_number}\n"
-                f"🛫 *Est. Departure:* {dep_time}"
-            )
-            wa_driver_url = generate_whatsapp_link(driver_mobile, ot_msg)
-            st.link_button("📲 Notify Driver via WhatsApp", wa_driver_url)
 
     st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
@@ -564,7 +582,9 @@ with tab3:
         
         # Configure selectbox columns for specific tables
         column_config = {}
-        if selected_table == "transit_groups":
+        if selected_table == "overtime_requests":
+            column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
+        elif selected_table == "transit_groups":
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
         elif selected_table == "transit_passengers":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
