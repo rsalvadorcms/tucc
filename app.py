@@ -32,7 +32,7 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. users table with emp_name
+    # 1. users table with emp_name[cite: 1]
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -95,7 +95,7 @@ def init_db():
         )
     ''')
 
-    # 6. fleet_drivers table
+    # 6. fleet_drivers table[cite: 2]
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -104,7 +104,7 @@ def init_db():
         )
     ''')
 
-    # 7. transit_groups table
+    # 7. transit_groups table[cite: 3]
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +116,7 @@ def init_db():
         )
     ''')
 
-    # 8. transit_passengers table
+    # 8. transit_passengers table[cite: 4]
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_passengers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +126,7 @@ def init_db():
         )
     ''')
 
-    # 9. daily_transit table
+    # 9. daily_transit table[cite: 5]
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,7 +156,7 @@ def init_db():
 
 init_db()
 
-# Schema migration helper
+# Migration function to rebuild old schema tables automatically
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -166,8 +166,20 @@ def run_migrations():
     user_cols = [col[1] for col in cursor.fetchall()]
     if "emp_name" not in user_cols:
         cursor.execute("ALTER TABLE users ADD COLUMN emp_name TEXT")
-        conn.commit()
 
+    # Rebuild transit_groups if group_name column is missing
+    cursor.execute("PRAGMA table_info(transit_groups)")
+    tg_cols = [col[1] for col in cursor.fetchall()]
+    if "group_name" not in tg_cols:
+        cursor.execute("DROP TABLE IF EXISTS daily_transit")
+        cursor.execute("DROP TABLE IF EXISTS transit_passengers")
+        cursor.execute("DROP TABLE IF EXISTS transit_groups")
+        conn.commit()
+        conn.close()
+        init_db()
+        return
+
+    conn.commit()
     conn.close()
 
 run_migrations()
