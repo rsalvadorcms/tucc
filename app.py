@@ -118,7 +118,7 @@ def init_db():
         )
     ''')
 
-    # 8. transit_groups table (group_name references cars.car_name)
+    # 8. transit_groups table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,7 +277,7 @@ with tab1:
         else:
             default_start = time(17, 30)
             default_end = time(19, 0)
-            st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
+            st.caption("ℹ️️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=default_end)
@@ -339,7 +339,6 @@ with tab1_b:
     
     with col1:
         st.subheader("1. Create Transit Group")
-        # Select group_name from cars table field car_name
         selected_car_group = st.selectbox("Group Name (Select from Cars)", cars_list if cars_list else ["No cars available"], key="g_car_select")
         selected_driver = st.selectbox("Assign Driver (from Fleet Drivers)", drivers_list if drivers_list else ["No drivers available"])
         etd_1 = st.text_input("ETD 1 (From)", value="05:45")
@@ -447,7 +446,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
@@ -571,13 +570,14 @@ with tab3:
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
         
-        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers", "cars"], key="import_tbl_sel")
+        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers", "cars", "transit_passengers"], key="import_tbl_sel")
         
         table_schemas = {
             "users": ["username", "password", "role", "email_recipients", "emp_name"],
             "holidays": ["holiday_date", "description"],
             "fleet_drivers": ["driver_name", "driver_mobile"],
-            "cars": ["car_name", "plate_number", "vehicle"]
+            "cars": ["car_name", "plate_number", "vehicle"],
+            "transit_passengers": ["group_name", "passengers"]
         }
         
         req_cols = table_schemas[import_table]
