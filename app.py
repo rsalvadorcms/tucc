@@ -37,93 +37,147 @@ def generate_car_name(index):
         second = string.ascii_uppercase[index % 26]
         return f"Car {first}{second}"
 
-def format_excel_worksheet(ws, df, title_text, logo_path="logo.png", merge_repeat_cols=None):
-    """Applies corporate styling, colors, logo insertion, auto column width, and cell merging to an openpyxl worksheet."""
+def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.png"):
+    """
+    Generates a customized Excel workbook matching the 
+    'Template - Daily Transportation Arrangement TUCC Batam.xlsx' design layout.
+    """
+    wb = openpyxl.Workbook()
     
-    # Styles definition
-    header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid") # Dark Blue
-    zebra_fill = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")  # Very Light Blue
-    title_font = Font(name="Arial", size=14, bold=True, color="1F4E78")
+    # --------------------------------------------------------------------------
+    # SHEET 1: Summary Format
+    # --------------------------------------------------------------------------
+    ws1 = wb.active
+    ws1.title = "DAILY TRANSPORTATION"
+    ws1.views.sheetView[0].showGridLines = True
+    
+    # Styling definitions matching Batam TUCC template
+    font_title = Font(name="Calibri", size=14, bold=True, color="1F4E78")
+    font_subtitle = Font(name="Calibri", size=11, bold=True, color="595959")
+    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    font_data = Font(name="Calibri", size=10)
+    font_bold_data = Font(name="Calibri", size=10, bold=True)
+    
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    sub_header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    zebra_fill = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")
     
     thin_border = Border(
-        left=Side(style='thin', color='D9D9D9'),
-        right=Side(style='thin', color='D9D9D9'),
-        top=Side(style='thin', color='D9D9D9'),
-        bottom=Side(style='thin', color='D9D9D9')
+        left=Side(style='thin', color='BFBFBF'),
+        right=Side(style='thin', color='BFBFBF'),
+        top=Side(style='thin', color='BFBFBF'),
+        bottom=Side(style='thin', color='BFBFBF')
     )
     
-    start_row = 1
+    # Header titles block
+    ws1["C2"] = "DAILY TRANSPORTATION ARRANGEMENT"
+    ws1["C2"].font = font_title
+    ws1["C3"] = "TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
+    ws1["C3"].font = font_subtitle
+    ws1["C4"] = "JOB CODE : 0 - 0847 - 00 - 0001"
+    ws1["C4"].font = font_subtitle
     
-    # 1. Add Logo if file exists
     if os.path.exists(logo_path):
         try:
             img = OpenpyxlImage(logo_path)
-            img.width = 120
-            img.height = 50
-            ws.add_image(img, "A1")
-            start_row = 5 # Push table down if logo exists
+            img.width = 110
+            img.height = 45
+            ws1.add_image(img, "A1")
         except Exception:
-            start_row = 1
+            pass
 
-    # 2. Add Worksheet Title
-    title_cell = ws.cell(row=start_row, column=1, value=title_text)
-    title_cell.font = title_font
-    start_row += 2
-
-    # 3. Write Header
-    headers = list(df.columns)
-    for col_num, header_title in enumerate(headers, 1):
-        cell = ws.cell(row=start_row, column=col_num, value=header_title)
-        cell.font = header_font
+    # Table Header Row
+    headers = [
+        "Car Group", "Vehicle Model", "Plate Number", "Driver Name", 
+        "Contact Number", "Passenger(s)", "ETD 1 (From)", "ETD 2 (To)"
+    ]
+    
+    start_row = 6
+    for col_idx, h_title in enumerate(headers, start=1):
+        cell = ws1.cell(row=start_row, column=col_idx, value=h_title)
+        cell.font = font_header
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
         
-    data_start_row = start_row + 1
-
-    # 4. Write Data Rows
-    for row_idx, row_data in enumerate(df.values, start=data_start_row):
-        is_even = (row_idx % 2 == 0)
-        for col_idx, value in enumerate(row_data, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx, value="" if pd.isna(value) else value)
+    for r_idx, row_vals in enumerate(groups_summary_df.values, start=start_row+1):
+        is_even = (r_idx % 2 == 0)
+        for c_idx, val in enumerate(row_vals, start=1):
+            cell = ws1.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
+            cell.font = font_data
             cell.border = thin_border
-            cell.alignment = Alignment(vertical="center")
             if is_even:
                 cell.fill = zebra_fill
+            if c_idx in [1, 3, 7, 8]:
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                cell.alignment = Alignment(vertical="center")
 
-    # 5. Merge Repeated Cells across groups (if requested)
-    if merge_repeat_cols and not df.empty:
-        current_group = None
-        group_start_row = data_start_row
-        
-        for r_idx, row_val in enumerate(df['group_name'].values, start=data_start_row):
-            if row_val != current_group:
-                # Merge previous group range
-                if current_group is not None and (r_idx - 1) > group_start_row:
-                    for col_c in merge_repeat_cols:
-                        ws.merge_cells(start_row=group_start_row, start_column=col_c, end_row=r_idx - 1, end_column=col_c)
-                        merged_cell = ws.cell(row=group_start_row, column=col_c)
-                        merged_cell.alignment = Alignment(horizontal="center", vertical="center")
-                current_group = row_val
-                group_start_row = r_idx
-        
-        # Merge final group
-        if current_group is not None and (data_start_row + len(df) - 1) > group_start_row:
-            for col_c in merge_repeat_cols:
-                ws.merge_cells(start_row=group_start_row, start_column=col_c, end_row=data_start_row + len(df) - 1, end_column=col_c)
-                merged_cell = ws.cell(row=group_start_row, column=col_c)
-                merged_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-    # 6. Auto-fit Column Widths
-    for col in ws.columns:
-        max_len = 0
+    # Auto column width adjustment
+    for col in ws1.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = col[0].column_letter
-        for cell in col:
-            val_str = str(cell.value or '')
-            if len(val_str) > max_len:
-                max_len = len(val_str)
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+        ws1.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    # --------------------------------------------------------------------------
+    # SHEET 2: Unrolled Passengers with Group Merging
+    # --------------------------------------------------------------------------
+    ws2 = wb.create_sheet(title="DETAILED ALLOCATIONS")
+    ws2.views.sheetView[0].showGridLines = True
+    
+    ws2["C2"] = "DAILY TRANSPORTATION ARRANGEMENT - PASSENGER LIST"
+    ws2["C2"].font = font_title
+    ws2["C3"] = "TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
+    ws2["C3"].font = font_subtitle
+    
+    det_headers = [
+        "Car Group", "Vehicle Model", "Plate Number", "Driver Name", 
+        "Contact Number", "ETD 1 (From)", "ETD 2 (To)", "Passenger Name"
+    ]
+    
+    for col_idx, h_title in enumerate(det_headers, start=1):
+        cell = ws2.cell(row=start_row, column=col_idx, value=h_title)
+        cell.font = font_header
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+        
+    data_start = start_row + 1
+    for r_idx, row_vals in enumerate(detailed_df.values, start=data_start):
+        for c_idx, val in enumerate(row_vals, start=1):
+            cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
+            cell.font = font_data
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="center")
+
+    # Merge repeated car/driver details for same car group
+    if not detailed_df.empty:
+        current_grp = None
+        grp_start = data_start
+        tot_rows = len(detailed_df)
+        
+        for idx, grp_val in enumerate(detailed_df['Group Name'].values, start=data_start):
+            if grp_val != current_grp:
+                if current_grp is not None and (idx - 1) > grp_start:
+                    for merge_col in [1, 2, 3, 4, 5, 6, 7]:
+                        ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=idx - 1, end_column=merge_col)
+                        ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center")
+                current_grp = grp_val
+                grp_start = idx
+                
+        if current_grp is not None and (data_start + tot_rows - 1) > grp_start:
+            for merge_col in [1, 2, 3, 4, 5, 6, 7]:
+                ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=data_start + tot_rows - 1, end_column=merge_col)
+                ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center")
+
+    for col in ws2.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = col[0].column_letter
+        ws2.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -478,10 +532,11 @@ with tab1_b:
     conn = get_db_connection()
     
     # Sheet 1 Data: Grouped Passengers (Comma-separated)
-    groups_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle", c.plate_number AS "Plate Number", 
-               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Driver Mobile", 
-               tg.etd_1 AS "ETD 1", tg.etd_2 AS "ETD 2", GROUP_CONCAT(tp.passengers, ', ') AS "Passengers"
+    groups_summary_df = pd.read_sql_query('''
+        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
+               GROUP_CONCAT(tp.passengers, ', ') AS "Passengers",
+               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)"
         FROM transit_groups tg
         LEFT JOIN cars c ON tg.group_name = c.car_name
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
@@ -491,9 +546,9 @@ with tab1_b:
 
     # Sheet 2 Data: Unrolled Passengers (Individual rows per passenger)
     unrolled_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "group_name", tg.group_name AS "Group Name", c.vehicle AS "Vehicle", c.plate_number AS "Plate Number", 
-               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Driver Mobile", 
-               tg.etd_1 AS "ETD 1", tg.etd_2 AS "ETD 2", tp.passengers AS "Passenger Name"
+        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
+               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
         FROM transit_groups tg
         LEFT JOIN cars c ON tg.group_name = c.car_name
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
@@ -502,33 +557,16 @@ with tab1_b:
     ''', conn)
     conn.close()
     
-    if not groups_df.empty:
-        st.dataframe(groups_df, use_container_width=True)
+    if not groups_summary_df.empty:
+        st.dataframe(groups_summary_df, use_container_width=True)
         
-        # Build Styled Multi-Sheet Workbook with Cell Merging & Formatting
-        wb = openpyxl.Workbook()
-        
-        # Sheet 1: Grouped
-        ws1 = wb.active
-        ws1.title = "Grouped Summary"
-        format_excel_worksheet(ws1, groups_df, title_text="TRANSIT GROUPS SUMMARY REPORT")
-        
-        # Sheet 2: Detailed Unrolled with Merged Group Columns
-        ws2 = wb.create_sheet(title="Detailed Passengers")
-        # Prepare display dataframe (omit sorting helper column 'group_name')
-        unrolled_display_df = unrolled_df.drop(columns=["group_name"])
-        # Columns 1 to 7 (Group Name, Vehicle, Plate Number, Driver, Mobile, ETD 1, ETD 2) will be merged per group
-        merge_cols = [1, 2, 3, 4, 5, 6, 7]
-        format_excel_worksheet(ws2, unrolled_display_df, title_text="DETAILED PASSENGER ALLOCATIONS REPORT", merge_repeat_cols=merge_cols)
-        
-        excel_buffer = io.BytesIO()
-        wb.save(excel_buffer)
-        excel_bytes = excel_buffer.getvalue()
+        # Build Styled Batam TUCC Excel Workbook
+        excel_bytes = export_custom_batam_excel(groups_summary_df, unrolled_df)
 
         st.download_button(
-            label="📥 Download Formatted Excel Report (.xlsx)",
+            label="📥 Download Custom Batam TUCC Excel Report (.xlsx)",
             data=excel_bytes,
-            file_name=f"Configured_Transit_Groups_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -581,7 +619,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
