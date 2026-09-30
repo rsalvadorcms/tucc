@@ -4,7 +4,12 @@ import sqlite3
 import io
 import urllib.parse
 import string
+import os
 from datetime import datetime, date, timedelta, time
+
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.drawing.image import Image as OpenpyxlImage
 
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
@@ -31,6 +36,94 @@ def generate_car_name(index):
         first = string.ascii_uppercase[(index // 26) - 1]
         second = string.ascii_uppercase[index % 26]
         return f"Car {first}{second}"
+
+def format_excel_worksheet(ws, df, title_text, logo_path="logo.png", merge_repeat_cols=None):
+    """Applies corporate styling, colors, logo insertion, auto column width, and cell merging to an openpyxl worksheet."""
+    
+    # Styles definition
+    header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid") # Dark Blue
+    zebra_fill = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")  # Very Light Blue
+    title_font = Font(name="Arial", size=14, bold=True, color="1F4E78")
+    
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+    
+    start_row = 1
+    
+    # 1. Add Logo if file exists
+    if os.path.exists(logo_path):
+        try:
+            img = OpenpyxlImage(logo_path)
+            img.width = 120
+            img.height = 50
+            ws.add_image(img, "A1")
+            start_row = 5 # Push table down if logo exists
+        except Exception:
+            start_row = 1
+
+    # 2. Add Worksheet Title
+    title_cell = ws.cell(row=start_row, column=1, value=title_text)
+    title_cell.font = title_font
+    start_row += 2
+
+    # 3. Write Header
+    headers = list(df.columns)
+    for col_num, header_title in enumerate(headers, 1):
+        cell = ws.cell(row=start_row, column=col_num, value=header_title)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+        
+    data_start_row = start_row + 1
+
+    # 4. Write Data Rows
+    for row_idx, row_data in enumerate(df.values, start=data_start_row):
+        is_even = (row_idx % 2 == 0)
+        for col_idx, value in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value="" if pd.isna(value) else value)
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="center")
+            if is_even:
+                cell.fill = zebra_fill
+
+    # 5. Merge Repeated Cells across groups (if requested)
+    if merge_repeat_cols and not df.empty:
+        current_group = None
+        group_start_row = data_start_row
+        
+        for r_idx, row_val in enumerate(df['group_name'].values, start=data_start_row):
+            if row_val != current_group:
+                # Merge previous group range
+                if current_group is not None and (r_idx - 1) > group_start_row:
+                    for col_c in merge_repeat_cols:
+                        ws.merge_cells(start_row=group_start_row, start_column=col_c, end_row=r_idx - 1, end_column=col_c)
+                        merged_cell = ws.cell(row=group_start_row, column=col_c)
+                        merged_cell.alignment = Alignment(horizontal="center", vertical="center")
+                current_group = row_val
+                group_start_row = r_idx
+        
+        # Merge final group
+        if current_group is not None and (data_start_row + len(df) - 1) > group_start_row:
+            for col_c in merge_repeat_cols:
+                ws.merge_cells(start_row=group_start_row, start_column=col_c, end_row=data_start_row + len(df) - 1, end_column=col_c)
+                merged_cell = ws.cell(row=group_start_row, column=col_c)
+                merged_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # 6. Auto-fit Column Widths
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            val_str = str(cell.value or '')
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -241,7 +334,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️️ 3. MAIN APP CONTROL PANELS
+# 🗂️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
@@ -384,10 +477,11 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     
-    # Sheet 1: Grouped Passengers (Comma-separated)
+    # Sheet 1 Data: Grouped Passengers (Comma-separated)
     groups_df = pd.read_sql_query('''
-        SELECT tg.id, tg.group_name, c.vehicle, c.plate_number, tg.driver_name, fd.driver_mobile, 
-               tg.etd_1, tg.etd_2, GROUP_CONCAT(tp.passengers, ', ') AS passengers
+        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle", c.plate_number AS "Plate Number", 
+               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Driver Mobile", 
+               tg.etd_1 AS "ETD 1", tg.etd_2 AS "ETD 2", GROUP_CONCAT(tp.passengers, ', ') AS "Passengers"
         FROM transit_groups tg
         LEFT JOIN cars c ON tg.group_name = c.car_name
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
@@ -395,31 +489,46 @@ with tab1_b:
         GROUP BY tg.id
     ''', conn)
 
-    # Sheet 2: Unrolled Passengers (Individual rows per passenger)
+    # Sheet 2 Data: Unrolled Passengers (Individual rows per passenger)
     unrolled_df = pd.read_sql_query('''
-        SELECT tg.id, tg.group_name, c.vehicle, c.plate_number, tg.driver_name, fd.driver_mobile, 
-               tg.etd_1, tg.etd_2, tp.passengers AS passenger_name
+        SELECT tg.group_name AS "group_name", tg.group_name AS "Group Name", c.vehicle AS "Vehicle", c.plate_number AS "Plate Number", 
+               tg.driver_name AS "Driver Name", fd.driver_mobile AS "Driver Mobile", 
+               tg.etd_1 AS "ETD 1", tg.etd_2 AS "ETD 2", tp.passengers AS "Passenger Name"
         FROM transit_groups tg
         LEFT JOIN cars c ON tg.group_name = c.car_name
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        ORDER BY tg.group_name
     ''', conn)
     conn.close()
     
     if not groups_df.empty:
         st.dataframe(groups_df, use_container_width=True)
         
-        # Build 2-sheet Excel buffer
+        # Build Styled Multi-Sheet Workbook with Cell Merging & Formatting
+        wb = openpyxl.Workbook()
+        
+        # Sheet 1: Grouped
+        ws1 = wb.active
+        ws1.title = "Grouped Summary"
+        format_excel_worksheet(ws1, groups_df, title_text="TRANSIT GROUPS SUMMARY REPORT")
+        
+        # Sheet 2: Detailed Unrolled with Merged Group Columns
+        ws2 = wb.create_sheet(title="Detailed Passengers")
+        # Prepare display dataframe (omit sorting helper column 'group_name')
+        unrolled_display_df = unrolled_df.drop(columns=["group_name"])
+        # Columns 1 to 7 (Group Name, Vehicle, Plate Number, Driver, Mobile, ETD 1, ETD 2) will be merged per group
+        merge_cols = [1, 2, 3, 4, 5, 6, 7]
+        format_excel_worksheet(ws2, unrolled_display_df, title_text="DETAILED PASSENGER ALLOCATIONS REPORT", merge_repeat_cols=merge_cols)
+        
         excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            groups_df.to_excel(writer, sheet_name="Grouped Passengers", index=False)
-            unrolled_df.to_excel(writer, sheet_name="Separate Passenger Rows", index=False)
+        wb.save(excel_buffer)
         excel_bytes = excel_buffer.getvalue()
 
         st.download_button(
-            label="📥 Download Configured Groups Data (.xlsx)",
+            label="📥 Download Formatted Excel Report (.xlsx)",
             data=excel_bytes,
-            file_name="configured_groups_and_passengers.xlsx",
+            file_name=f"Configured_Transit_Groups_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -472,7 +581,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
@@ -607,7 +716,7 @@ with tab3:
         }
         
         req_cols = table_schemas[import_table]
-        st.caption(f"ℹ️️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
+        st.caption(f"ℹ️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
         
         buffer_template = io.BytesIO()
         template_df = pd.DataFrame(columns=req_cols)
