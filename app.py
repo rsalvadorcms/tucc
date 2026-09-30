@@ -908,30 +908,25 @@ with tab1_c:
             disp_date_end_str = disp_date_start_str
             st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
-        # Default value index 0 ("Custom / Manual Entry...") when reset, otherwise preset
-        loc_from_idx = 0 if reset_id > 0 else (1 if "Yard-1 Office" in existing_origins else 0)
-        sel_loc_from = st.selectbox(
-            "Origin Location (Select standard location or enter custom below)", 
-            options=["Custom / Manual Entry..."] + existing_origins, 
-            index=loc_from_idx,
+        # Origin Location Combobox (Supports typing directly or selecting)
+        default_origin_val = None if reset_id > 0 else ("Yard-1 Office" if "Yard-1 Office" in existing_origins else None)
+        location_from = st.selectbox(
+            "Origin Location (Type location or select suggestion)", 
+            options=existing_origins, 
+            index=existing_origins.index(default_origin_val) if default_origin_val in existing_origins else None,
+            placeholder="Type or select Origin Location...",
             key=f"sel_loc_from_{reset_id}"
         )
-        if sel_loc_from == "Custom / Manual Entry...":
-            location_from = st.text_input("Enter Custom Origin Location", value="", key=f"txt_loc_from_{reset_id}")
-        else:
-            location_from = sel_loc_from
 
-        loc_to_idx = 0 if reset_id > 0 else (1 if "Yard-3 Office" in existing_dests else 0)
-        sel_loc_to = st.selectbox(
-            "Target Location (Select standard location or enter custom below)", 
-            options=["Custom / Manual Entry..."] + existing_dests, 
-            index=loc_to_idx,
+        # Target Location Combobox (Supports typing directly or selecting)
+        default_target_val = None if reset_id > 0 else ("Yard-3 Office" if "Yard-3 Office" in existing_dests else None)
+        location_to = st.selectbox(
+            "Target Location (Type location or select suggestion)", 
+            options=existing_dests, 
+            index=existing_dests.index(default_target_val) if default_target_val in existing_dests else None,
+            placeholder="Type or select Target Location...",
             key=f"sel_loc_to_{reset_id}"
         )
-        if sel_loc_to == "Custom / Manual Entry...":
-            location_to = st.text_input("Enter Custom Target Location", value="", key=f"txt_loc_to_{reset_id}")
-        else:
-            location_to = sel_loc_to
 
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
@@ -972,7 +967,7 @@ with tab1_c:
                     conn.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, location_from, location_to, is_daily))
+                    ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, str(location_from).strip(), str(location_to).strip(), is_daily))
                     conn.commit()
                     conn.close()
                     set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request successfully logged for {requested_by}.", "success")
@@ -1080,7 +1075,7 @@ with tab1_c:
                 for idx, row in filtered_df.iterrows():
                     rec_id = row['id']
                     grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
-                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
+                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
                     
                     with st.expander(f"✏️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
@@ -1107,17 +1102,8 @@ with tab1_c:
                                 edit_dt_end = edit_dt_start
                                 st.caption("ℹ️ Non-recurring: Date End automatically set to Date Start.")
 
-                            edit_sel_loc_from = st.selectbox("Origin Location", options=["Custom / Manual Entry..."] + existing_origins, index=existing_origins.index(row['location_from']) + 1 if row['location_from'] in existing_origins else 0, key=f"e_sel_loc_from_{rec_id}")
-                            if edit_sel_loc_from == "Custom / Manual Entry...":
-                                edit_loc_from = st.text_input("Custom Origin Location", value=row['location_from'] or "", key=f"e_loc_from_{rec_id}")
-                            else:
-                                edit_loc_from = edit_sel_loc_from
-
-                            edit_sel_loc_to = st.selectbox("Target Location", options=["Custom / Manual Entry..."] + existing_dests, index=existing_dests.index(row['location_to']) + 1 if row['location_to'] in existing_dests else 0, key=f"e_sel_loc_to_{rec_id}")
-                            if edit_sel_loc_to == "Custom / Manual Entry...":
-                                edit_loc_to = st.text_input("Custom Target Location", value=row['location_to'] or "", key=f"e_loc_to_{rec_id}")
-                            else:
-                                edit_loc_to = edit_sel_loc_to
+                            edit_loc_from = st.selectbox("Origin Location", options=existing_origins, index=existing_origins.index(row['location_from']) if row['location_from'] in existing_origins else None, placeholder="Type or select Origin...", key=f"e_sel_loc_from_{rec_id}")
+                            edit_loc_to = st.selectbox("Target Location", options=existing_dests, index=existing_dests.index(row['location_to']) if row['location_to'] in existing_dests else None, placeholder="Type or select Target...", key=f"e_sel_loc_to_{rec_id}")
 
                         with e_col2:
                             edit_raw_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
@@ -1147,7 +1133,7 @@ with tab1_c:
                                             UPDATE daily_transit
                                             SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
                                             WHERE id=?
-                                        ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
+                                        ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, str(edit_loc_from).strip(), str(edit_loc_to).strip(), edit_daily, rec_id))
                                         conn.commit()
                                         conn.close()
                                         set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been updated.", "success")
