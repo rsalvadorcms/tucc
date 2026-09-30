@@ -241,7 +241,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS
+# 🗂️️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
@@ -277,7 +277,7 @@ with tab1:
         else:
             default_start = time(17, 30)
             default_end = time(19, 0)
-            st.caption("ℹ️️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
+            st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
         start_time = st.time_input("OT Start Time", value=default_start)
         end_time = st.time_input("OT End Time", value=default_end)
@@ -383,6 +383,8 @@ with tab1_b:
     st.markdown("---")
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
+    
+    # Sheet 1: Grouped Passengers (Comma-separated)
     groups_df = pd.read_sql_query('''
         SELECT tg.id, tg.group_name, c.vehicle, c.plate_number, tg.driver_name, fd.driver_mobile, 
                tg.etd_1, tg.etd_2, GROUP_CONCAT(tp.passengers, ', ') AS passengers
@@ -392,10 +394,34 @@ with tab1_b:
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
         GROUP BY tg.id
     ''', conn)
+
+    # Sheet 2: Unrolled Passengers (Individual rows per passenger)
+    unrolled_df = pd.read_sql_query('''
+        SELECT tg.id, tg.group_name, c.vehicle, c.plate_number, tg.driver_name, fd.driver_mobile, 
+               tg.etd_1, tg.etd_2, tp.passengers AS passenger_name
+        FROM transit_groups tg
+        LEFT JOIN cars c ON tg.group_name = c.car_name
+        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+    ''', conn)
     conn.close()
     
     if not groups_df.empty:
         st.dataframe(groups_df, use_container_width=True)
+        
+        # Build 2-sheet Excel buffer
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            groups_df.to_excel(writer, sheet_name="Grouped Passengers", index=False)
+            unrolled_df.to_excel(writer, sheet_name="Separate Passenger Rows", index=False)
+        excel_bytes = excel_buffer.getvalue()
+
+        st.download_button(
+            label="📥 Download Configured Groups Data (.xlsx)",
+            data=excel_bytes,
+            file_name="configured_groups_and_passengers.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
@@ -446,7 +472,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
@@ -581,7 +607,7 @@ with tab3:
         }
         
         req_cols = table_schemas[import_table]
-        st.caption(f"ℹ️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
+        st.caption(f"ℹ️️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
         
         buffer_template = io.BytesIO()
         template_df = pd.DataFrame(columns=req_cols)
