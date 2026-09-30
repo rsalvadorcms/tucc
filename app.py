@@ -828,7 +828,6 @@ with tab1_c:
     conn.close()
     
     if not daily_raw_df.empty:
-        # Exportable formatted DataFrame
         export_df = daily_raw_df.rename(columns={
             "id": "Dispatch ID",
             "transit_date": "Transit Date",
@@ -851,64 +850,106 @@ with tab1_c:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         
-        # Admin Edit & Delete Management Console
+        # --- ADMIN MANAGEMENT & SEARCH FILTER CONSOLE ---
         if is_admin:
             st.markdown("---")
             st.subheader("🛠️ Admin Management: Edit / Delete Dispatch Records")
             
+            # --- SEARCH AND FILTER PANEL ---
+            with st.expander("🔍 Search & Filter Dispatch Records", expanded=True):
+                sf_col1, sf_col2, sf_col3 = st.columns([2, 2, 2])
+                
+                with sf_col1:
+                    search_query = st.text_input("Search (Requester, Origin, Dest, Group)", value="", key="search_dispatch_txt")
+                
+                with sf_col2:
+                    filter_group = st.selectbox("Filter by Group / Car", options=["All"] + ["TBA"] + available_groups, index=0, key="filter_grp_sel")
+                    
+                with sf_col3:
+                    filter_date_range = st.date_input("Filter by Date Range", value=[], key="filter_dt_range")
+
+            # Apply Filter Logic to Data
+            filtered_df = daily_raw_df.copy()
+            
+            # 1. Text Search Filter
+            if search_query:
+                sq = search_query.lower()
+                filtered_df = filtered_df[
+                    filtered_df['requested_by'].astype(str).str.lower().str.contains(sq) |
+                    filtered_df['location_from'].astype(str).str.lower().str.contains(sq) |
+                    filtered_df['location_to'].astype(str).str.lower().str.contains(sq) |
+                    filtered_df['group_name'].astype(str).str.lower().str.contains(sq)
+                ]
+                
+            # 2. Group Filter
+            if filter_group != "All":
+                filtered_df = filtered_df[filtered_df['group_name'] == filter_group]
+                
+            # 3. Date Range Filter
+            if len(filter_date_range) == 2:
+                start_f, end_f = filter_date_range
+                filtered_df['dt_obj'] = pd.to_datetime(filtered_df['transit_date']).dt.date
+                filtered_df = filtered_df[(filtered_df['dt_obj'] >= start_f) & (filtered_df['dt_obj'] <= end_f)]
+
+            st.caption(f"Showing **{len(filtered_df)}** of **{len(daily_raw_df)}** recorded dispatches.")
+            
             group_options_all = ["TBA"] + available_groups
             
-            for idx, row in daily_raw_df.iterrows():
-                rec_id = row['id']
-                rec_title = f"ID #{rec_id} | {row['transit_date']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
-                
-                with st.expander(f"✏️ Manage Record: {rec_title}"):
-                    e_col1, e_col2 = st.columns(2)
+            # Render Expandable Edit Cards for Filtered Items
+            if not filtered_df.empty:
+                for idx, row in filtered_df.iterrows():
+                    rec_id = row['id']
+                    rec_title = f"ID #{rec_id} | {row['transit_date']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
                     
-                    with e_col1:
-                        try:
-                            curr_dt_obj = datetime.strptime(row['transit_date'], "%Y-%m-%d").date()
-                        except (ValueError, TypeError):
-                            curr_dt_obj = date.today()
+                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
+                        e_col1, e_col2 = st.columns(2)
+                        
+                        with e_col1:
+                            try:
+                                curr_dt_obj = datetime.strptime(row['transit_date'], "%Y-%m-%d").date()
+                            except (ValueError, TypeError):
+                                curr_dt_obj = date.today()
+                                
+                            edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
+                            edit_date = st.date_input("Transit Date", value=curr_dt_obj, key=f"e_dt_{rec_id}")
+                            edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "Yard-1 Office", key=f"e_loc_from_{rec_id}")
+                            edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
+
+                        with e_col2:
+                            edit_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
+                            edit_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
                             
-                        edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
-                        edit_date = st.date_input("Transit Date", value=curr_dt_obj, key=f"e_dt_{rec_id}")
-                        edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "Yard-1 Office", key=f"e_loc_from_{rec_id}")
-                        edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
+                            curr_grp = row['group_name'] if row['group_name'] in group_options_all else "TBA"
+                            edit_grp = st.selectbox("Group / Car Name", options=group_options_all, index=group_options_all.index(curr_grp), key=f"e_grp_{rec_id}")
+                            
+                            curr_daily = row['daily'] if row['daily'] in ["Yes", "No"] else "No"
+                            edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(curr_daily), key=f"e_daily_{rec_id}")
 
-                    with e_col2:
-                        edit_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
-                        edit_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
+                        btn_col1, btn_col2 = st.columns([1, 4])
                         
-                        curr_grp = row['group_name'] if row['group_name'] in group_options_all else "TBA"
-                        edit_grp = st.selectbox("Group / Car Name", options=group_options_all, index=group_options_all.index(curr_grp), key=f"e_grp_{rec_id}")
-                        
-                        curr_daily = row['daily'] if row['daily'] in ["Yes", "No"] else "No"
-                        edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(curr_daily), key=f"e_daily_{rec_id}")
+                        with btn_col1:
+                            if st.button("💾 Save Changes", key=f"btn_save_{rec_id}"):
+                                conn = get_db_connection()
+                                conn.execute('''
+                                    UPDATE daily_transit
+                                    SET transit_date=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
+                                    WHERE id=?
+                                ''', (edit_date.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Record ID #{rec_id} updated successfully!")
+                                st.rerun()
 
-                    btn_col1, btn_col2 = st.columns([1, 4])
-                    
-                    with btn_col1:
-                        if st.button("💾 Save Changes", key=f"btn_save_{rec_id}"):
-                            conn = get_db_connection()
-                            conn.execute('''
-                                UPDATE daily_transit
-                                SET transit_date=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
-                                WHERE id=?
-                            ''', (edit_date.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Record ID #{rec_id} updated successfully!")
-                            st.rerun()
-
-                    with btn_col2:
-                        if st.button("🗑️ Delete Record", key=f"btn_del_{rec_id}", type="primary"):
-                            conn = get_db_connection()
-                            conn.execute("DELETE FROM daily_transit WHERE id=?", (rec_id,))
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Record ID #{rec_id} deleted!")
-                            st.rerun()
+                        with btn_col2:
+                            if st.button("🗑️ Delete Record", key=f"btn_del_{rec_id}", type="primary"):
+                                conn = get_db_connection()
+                                conn.execute("DELETE FROM daily_transit WHERE id=?", (rec_id,))
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Record ID #{rec_id} deleted!")
+                                st.rerun()
+            else:
+                st.info("No dispatch records match your search filter criteria.")
     else:
         st.info("No transit dispatches scheduled yet.")
 
