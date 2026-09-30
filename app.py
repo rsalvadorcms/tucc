@@ -473,6 +473,10 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = ""
     st.session_state.emp_name = ""
 
+# Guard against missing keys on existing active sessions
+if 'emp_name' not in st.session_state:
+    st.session_state.emp_name = st.session_state.get('username', '')
+
 if not st.session_state.logged_in:
     st.title("🏢 Office Operations Portal")
     st.subheader("Login to access scheduling & overtime systems")
@@ -497,7 +501,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️️ 3. MAIN APP CONTROL PANELS
+# 🗂️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
@@ -523,11 +527,12 @@ with tab1:
     all_emp_names = users_df['emp_name'].tolist()
     conn.close()
     
+    current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
+
     if not all_emp_names:
-        all_emp_names = [st.session_state.emp_name or st.session_state.username]
+        all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
         
-    logged_in_emp = st.session_state.emp_name if st.session_state.emp_name in all_emp_names else all_emp_names[0]
-    default_emp_index = all_emp_names.index(logged_in_emp) if logged_in_emp in all_emp_names else 0
+    logged_in_emp = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
 
     col1, col2 = st.columns(2)
     with col1:
@@ -557,7 +562,7 @@ with tab1:
             default_origin = "Yard-1 Office"
             default_dest = "Panbil"
             default_dep_time_str = "19:00"
-            st.caption("ℹ️️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
+            st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
         # Military time inputs
         start_time = st.time_input("OT Start Time (24-hr Military Time)", value=default_start)
@@ -762,7 +767,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f" *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
