@@ -110,7 +110,6 @@ def render_datalist_options(list_id: str, options: list):
         }}
         dl.innerHTML = '{options_html}';
         
-        // Attach datalist to text inputs with matching aria-label or placeholder
         const inputs = parentDoc.querySelectorAll('input[type="text"]');
         inputs.forEach(input => {{
             if (input.placeholder && input.placeholder.includes('{list_id}')) {{
@@ -420,6 +419,13 @@ def init_db():
             description TEXT
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trips (
+            trip TEXT PRIMARY KEY,
+            trip_name TEXT NOT NULL
+        )
+    ''')
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
@@ -507,13 +513,23 @@ def init_db():
             etd_2 TEXT,
             location_from TEXT,
             location_to TEXT,
-            daily TEXT DEFAULT 'No'
+            daily TEXT DEFAULT 'No',
+            trip TEXT DEFAULT 'Trip A'
         )
     ''')
     
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
+
+    # Populate default records into trips table
+    default_trips = [
+        ("Trip A", "Yard to Yard"),
+        ("Trip B", "Sunday Panbil - Wasco - Panbil"),
+        ("Trip C", "Panbil - Destination - Panbil")
+    ]
+    for trip_code, trip_desc in default_trips:
+        cursor.execute("INSERT OR IGNORE INTO trips (trip, trip_name) VALUES (?, ?)", (trip_code, trip_desc))
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone()[0] == 0:
@@ -567,11 +583,15 @@ def run_migrations():
         "etd_2": "TEXT",
         "location_from": "TEXT",
         "location_to": "TEXT",
-        "daily": "TEXT DEFAULT 'No'"
+        "daily": "TEXT DEFAULT 'No'",
+        "trip": "TEXT DEFAULT 'Trip A'"
     }
     for col_name, col_type in new_dt_fields.items():
         if col_name not in dt_cols_updated:
             cursor.execute(f"ALTER TABLE daily_transit ADD COLUMN {col_name} {col_type}")
+
+    # Ensure existing records with NULL trip are set to 'Trip A'
+    cursor.execute("UPDATE daily_transit SET trip = 'Trip A' WHERE trip IS NULL OR trip = ''")
 
     conn.commit()
     conn.close()
@@ -868,6 +888,7 @@ with tab1_c:
     all_emp_names = users_df['emp_name'].tolist()
     
     cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
+    trips_db_df = pd.read_sql_query("SELECT trip, trip_name FROM trips ORDER BY trip", conn)
     
     origins_df = pd.read_sql_query("SELECT DISTINCT location_from FROM daily_transit WHERE location_from IS NOT NULL AND location_from != ''", conn)
     dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL AND location_to != ''", conn)
@@ -888,6 +909,19 @@ with tab1_c:
     default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
     is_admin = st.session_state.get("role", "") == "Admin"
 
+    trip_option_labels = []
+    trip_code_map = {}
+    if not trips_db_df.empty:
+        for _, t_row in trips_db_df.iterrows():
+            t_code = str(t_row['trip']).strip()
+            t_desc = str(t_row['trip_name']).strip()
+            lbl = f"{t_code} ({t_desc})"
+            trip_option_labels.append(lbl)
+            trip_code_map[lbl] = t_code
+    else:
+        trip_option_labels = ["Trip A (Yard to Yard)"]
+        trip_code_map = {"Trip A (Yard to Yard)": "Trip A"}
+
     car_option_labels = ["TBA - To Be Assigned"]
     car_label_to_group = {"TBA - To Be Assigned": "TBA"}
     car_group_to_label = {"TBA": "TBA - To Be Assigned"}
@@ -901,7 +935,7 @@ with tab1_c:
             label_str = f"{c_name} - {p_num}" + (f" ({v_model})" if v_model else "")
             car_option_labels.append(label_str)
             car_label_to_group[label_str] = c_name
-            car_group_to_label[c_name] = label_str
+            car_group_to_label[c_name] = c_name
 
     if "dispatch_reset_counter" not in st.session_state:
         st.session_state.dispatch_reset_counter = 0
@@ -914,6 +948,9 @@ with tab1_c:
         
         requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by), key=f"dt_req_{reset_id}")
         
+        selected_trip_label = st.selectbox("Trip Category", options=trip_option_labels, index=0, key=f"dt_trip_{reset_id}")
+        selected_trip_code = trip_code_map.get(selected_trip_label, "Trip A")
+
         if is_admin:
             is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0, key=f"dt_daily_{reset_id}")
         else:
@@ -943,7 +980,6 @@ with tab1_c:
         default_origin_text = "" if reset_id > 0 else "Yard-1 Office"
         default_dest_text = "" if reset_id > 0 else "Yard-3 Office"
 
-        # Combobox Direct Free-Text Input Field with Datalist Suggestions
         location_from = st.text_input(
             "Origin Location (Type any custom text or select suggestion)", 
             value=default_origin_text,
@@ -995,12 +1031,12 @@ with tab1_c:
                 try:
                     conn = get_db_connection()
                     conn.execute('''
-                        INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, str(location_from).strip(), str(location_to).strip(), is_daily))
+                        INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, str(location_from).strip(), str(location_to).strip(), is_daily, selected_trip_code))
                     conn.commit()
                     conn.close()
-                    set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request successfully logged for {requested_by}.", "success")
+                    set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request ({selected_trip_code}) successfully logged for {requested_by}.", "success")
                 except Exception as e:
                     set_transaction_dialog("Data Transaction Unsuccessful", f"Database error: {str(e)}", "error")
             st.rerun()
@@ -1015,7 +1051,7 @@ with tab1_c:
     
     conn = get_db_connection()
     daily_raw_df = pd.read_sql_query('''
-        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, dt.requested_by, 
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, dt.trip, dt.requested_by, 
                dt.group_name, c.plate_number, c.vehicle,
                dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
         FROM daily_transit dt
@@ -1033,12 +1069,13 @@ with tab1_c:
         )
         
         export_df = display_df[[
-            "id", "transit_date_start", "transit_date_end", "requested_by", 
+            "id", "transit_date_start", "transit_date_end", "trip", "requested_by", 
             "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"
         ]].rename(columns={
             "id": "Dispatch ID",
             "transit_date_start": "Transit Date Start",
             "transit_date_end": "Transit Date End",
+            "trip": "Trip Category",
             "requested_by": "Requested By",
             "location_from": "Origin (From)",
             "location_to": "Destination (To)",
@@ -1066,7 +1103,7 @@ with tab1_c:
                 sf_col1, sf_col2, sf_col3 = st.columns([2, 2, 2])
                 
                 with sf_col1:
-                    search_query = st.text_input("Search (Requester, Origin, Dest, Car, Plate)", value="", key="search_dispatch_txt")
+                    search_query = st.text_input("Search (Requester, Trip, Origin, Dest, Car, Plate)", value="", key="search_dispatch_txt")
                 
                 with sf_col2:
                     filter_car_label = st.selectbox("Filter by Group / Car", options=["All"] + car_option_labels, index=0, key="filter_grp_sel")
@@ -1084,6 +1121,7 @@ with tab1_c:
                 sq = search_query.lower()
                 filtered_df = filtered_df[
                     filtered_df['requested_by'].astype(str).str.lower().str.contains(sq) |
+                    filtered_df['trip'].astype(str).str.lower().str.contains(sq) |
                     filtered_df['location_from'].astype(str).str.lower().str.contains(sq) |
                     filtered_df['location_to'].astype(str).str.lower().str.contains(sq) |
                     filtered_df['group_name'].astype(str).str.lower().str.contains(sq) |
@@ -1105,9 +1143,9 @@ with tab1_c:
                 for idx, row in filtered_df.iterrows():
                     rec_id = row['id']
                     grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
-                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
+                    rec_title = f"ID #{rec_id} | [{row['trip'] or 'Trip A'}] | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
                     
-                    with st.expander(f"✏️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
@@ -1122,6 +1160,14 @@ with tab1_c:
                                 curr_end_obj = curr_start_obj
                                 
                             edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
+                            
+                            curr_trip_code = row['trip'] if row['trip'] in trip_code_map.values() else "Trip A"
+                            edit_trip_label = [lbl for lbl, code in trip_code_map.items() if code == curr_trip_code]
+                            edit_trip_idx = trip_option_labels.index(edit_trip_label[0]) if edit_trip_label else 0
+                            
+                            edit_trip_sel = st.selectbox("Trip Category", options=trip_option_labels, index=edit_trip_idx, key=f"e_trip_{rec_id}")
+                            edit_trip_code = trip_code_map.get(edit_trip_sel, "Trip A")
+
                             edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(row['daily'] if row['daily'] in ["Yes", "No"] else "No"), key=f"e_daily_{rec_id}")
                             
                             edit_dt_start = st.date_input("Transit Date Start", value=curr_start_obj, key=f"e_dt_start_{rec_id}")
@@ -1161,9 +1207,9 @@ with tab1_c:
                                         conn = get_db_connection()
                                         conn.execute('''
                                             UPDATE daily_transit
-                                            SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
+                                            SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?, trip=?
                                             WHERE id=?
-                                        ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, str(edit_loc_from).strip(), str(edit_loc_to).strip(), edit_daily, rec_id))
+                                        ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, str(edit_loc_from).strip(), str(edit_loc_to).strip(), edit_daily, edit_trip_code, rec_id))
                                         conn.commit()
                                         conn.close()
                                         set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been updated.", "success")
@@ -1298,11 +1344,12 @@ with tab3:
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
         
-        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers", "cars", "transit_passengers"], key="import_tbl_sel")
+        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "trips", "fleet_drivers", "cars", "transit_passengers"], key="import_tbl_sel")
         
         table_schemas = {
             "users": ["username", "password", "role", "email_recipients", "emp_name"],
             "holidays": ["holiday_date", "description"],
+            "trips": ["trip", "trip_name"],
             "fleet_drivers": ["driver_name", "driver_mobile"],
             "cars": ["car_name", "plate_number", "vehicle", "color"],
             "transit_passengers": ["group_name", "passengers"]
@@ -1365,7 +1412,7 @@ with tab3:
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
-        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
+        table_options = ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
         conn = get_db_connection()
@@ -1380,6 +1427,7 @@ with tab3:
         cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
         groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
+        trips_list = [t['trip'] for t in conn.execute("SELECT trip FROM trips").fetchall()]
         conn.close()
         
         column_config = {}
@@ -1394,6 +1442,7 @@ with tab3:
         elif selected_table == "daily_transit":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=["TBA"] + groups_list)
             column_config["daily"] = st.column_config.SelectboxColumn("Daily Recurring", options=["Yes", "No"])
+            column_config["trip"] = st.column_config.SelectboxColumn("Trip Category", options=trips_list)
 
         st.markdown("💡 *Edit cells or use dropdowns where configured. Passwords are masked.*")
         
