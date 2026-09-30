@@ -32,15 +32,6 @@ LOGO2_PATH = "logo2.png"
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
-def generate_whatsapp_link(phone_number, text):
-    """Generates a pre-filled WhatsApp click-to-chat URL."""
-    clean_phone = phone_number.replace("+", "").replace(" ", "").replace("-", "") if phone_number else ""
-    encoded_text = urllib.parse.quote(text)
-    if clean_phone:
-        return f"https://wa.me/{clean_phone}?text={encoded_text}"
-    else:
-        return f"https://api.whatsapp.com/send?text={encoded_text}"
-
 def export_df_to_excel(df, sheet_name="Data"):
     """Generic helper function to export any pandas DataFrame to XLSX format."""
     buffer = io.BytesIO()
@@ -231,7 +222,7 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     )
     eff_date_style = ParagraphStyle(
         'EffDateStyle', parent=styles['Normal'], fontName='Helvetica-Bold',
-        fontSize=10, leading=12, alignment=2, textColor=colors.HexColor('#000000') # Right aligned
+        fontSize=10, leading=12, alignment=2, textColor=colors.HexColor('#000000')
     )
     cell_style = ParagraphStyle(
         'CellText', parent=styles['Normal'], fontName='Helvetica',
@@ -244,7 +235,6 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     
     story = []
     
-    # Title Block matching Excel B2:D4
     title_p = Paragraph("Daily Transportation Arrangement - Passenger list", title_style)
     sub1_p = Paragraph("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]", subtitle_style)
     sub2_p = Paragraph("JOB CODE : 0 - 0847 - 00 - 0001", subtitle_style)
@@ -266,7 +256,6 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     story.append(top_table)
     story.append(Spacer(1, 10))
     
-    # Row 5 equivalent: Effective Date Block (Cell E5 & F5)
     eff_p = Paragraph(f"<b>Effective Date:</b> {effective_date_str}", eff_date_style)
     eff_table = Table([[Paragraph("", cell_style), eff_p]], colWidths=[550, 230])
     eff_table.setStyle(TableStyle([
@@ -276,7 +265,6 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     story.append(eff_table)
     story.append(Spacer(1, 8))
     
-    # Main Data Table
     headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     table_data = [[Paragraph(h, header_style) for h in headers]]
     
@@ -439,8 +427,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             transit_date TEXT NOT NULL,
-            group_name TEXT NOT NULL,
-            FOREIGN KEY (group_name) REFERENCES transit_groups(group_name) ON DELETE CASCADE
+            group_name TEXT DEFAULT 'TBA',
+            requested_by TEXT,
+            etd_1 TEXT,
+            etd_2 TEXT,
+            location_from TEXT,
+            location_to TEXT,
+            daily TEXT DEFAULT 'No'
         )
     ''')
     
@@ -481,6 +474,21 @@ def run_migrations():
     ot_cols = [col[1] for col in cursor.fetchall()]
     if "emp_name" not in ot_cols:
         cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
+
+    # Migrations for daily_transit table
+    cursor.execute("PRAGMA table_info(daily_transit)")
+    dt_cols = [col[1] for col in cursor.fetchall()]
+    new_dt_fields = {
+        "requested_by": "TEXT",
+        "etd_1": "TEXT",
+        "etd_2": "TEXT",
+        "location_from": "TEXT",
+        "location_to": "TEXT",
+        "daily": "TEXT DEFAULT 'No'"
+    }
+    for col_name, col_type in new_dt_fields.items():
+        if col_name not in dt_cols:
+            cursor.execute(f"ALTER TABLE daily_transit ADD COLUMN {col_name} {col_type}")
 
     conn.commit()
     conn.close()
@@ -636,7 +644,6 @@ with tab1:
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
         
-        # Changed export to Excel (.xlsx)
         ot_excel_bytes = export_df_to_excel(ot_df, sheet_name="Overtime_Requests")
         st.download_button(
             label="📥 Export Overtime Log to Excel (.xlsx)",
@@ -703,7 +710,6 @@ with tab1_b:
 
     st.markdown("---")
     
-    # Effective Date Selection beside the section title
     title_col, eff_date_col = st.columns([2, 1])
     with title_col:
         st.subheader("📋 Configured Groups & Assigned Passengers")
@@ -755,95 +761,99 @@ with tab1_b:
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
-    st.header("📅 Daily Transit Dispatch Schedule")
+    st.header("📅 Daily Transit Dispatch Schedule & Route Setting")
     
     conn = get_db_connection()
+    users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
+    all_emp_names = users_df['emp_name'].tolist()
     available_groups = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
     conn.close()
     
+    current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
+    if not all_emp_names:
+        all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
+    
+    default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
+    is_admin = st.session_state.get("role", "") == "Admin"
+
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Schedule Groups for Date")
-        dispatch_date = st.date_input("Select Transit Date", value=date.today())
-        disp_date_str = dispatch_date.strftime("%Y-%m-%d")
+        st.subheader("Configure Transit Request")
         
-        if available_groups:
-            # Multiselect for scheduling multiple groups at once
-            selected_dispatch_groups = st.multiselect(
-                "Select Group Name(s) to Dispatch", 
-                options=available_groups, 
-                key="disp_groups_sel"
-            )
-            
-            if st.button("Schedule Daily Transit"):
-                if selected_dispatch_groups:
-                    conn = get_db_connection()
-                    for grp in selected_dispatch_groups:
-                        conn.execute("INSERT INTO daily_transit (transit_date, group_name) VALUES (?, ?)",
-                                     (disp_date_str, grp))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"Successfully scheduled {len(selected_dispatch_groups)} group(s) for {disp_date_str}!")
-                    st.rerun()
-                else:
-                    st.error("Please select at least one group name.")
-        else:
-            st.warning("No Transit Groups created yet.")
-            
+        # 1. Requested By
+        requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by))
+        
+        # 2. Transit Date Restricted to Today -> Today + 30 days
+        min_date = date.today()
+        max_date = min_date + timedelta(days=30)
+        dispatch_date = st.date_input("Select Transit Date", value=min_date, min_value=min_date, max_value=max_date)
+        disp_date_str = dispatch_date.strftime("%Y-%m-%d") if dispatch_date else ""
+        
+        # 3. Location From & Location To
+        location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
+        location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
+
     with col2:
-        st.subheader("📢 Share Schedule via WhatsApp")
-        filter_date = st.date_input("Filter Schedule Date", value=date.today(), key="filter_sched_date")
-        filter_date_str = filter_date.strftime("%Y-%m-%d")
+        st.subheader("Schedule & Vehicle Allocation")
         
-        conn = get_db_connection()
-        daily_df = pd.read_sql_query('''
-            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name, c.vehicle, c.plate_number, c.color,
-                   tg.driver_name, fd.driver_mobile, tg.etd_1, tg.etd_2, 
-                   GROUP_CONCAT(tp.passengers, ', ') AS passengers
-            FROM daily_transit dt
-            JOIN transit_groups tg ON dt.group_name = tg.group_name
-            LEFT JOIN cars c ON tg.group_name = c.car_name
-            LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
-            LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
-            WHERE dt.transit_date = ?
-            GROUP BY dt.id
-        ''', conn, params=[filter_date_str])
-        conn.close()
+        # 4. ETD 1 (Start) & ETD 2 (Return)
+        etd_1 = st.text_input("ETD 1 (Start Time)", value="08:00")
+        etd_2 = st.text_input("ETD 2 (Return Time)", value="17:00")
         
-        if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+        # 5. Group Name Selection (Regular User = Disabled "TBA", Admin = Selectable)
+        group_options = ["TBA"] + available_groups
+        if is_admin:
+            selected_group = st.selectbox("Assigned Group / Car Name", options=group_options, index=0)
+        else:
+            selected_group = st.selectbox("Assigned Group / Car Name", options=["TBA"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
             
-            for idx, row in daily_df.iterrows():
-                summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
-                summary_text += f"*Plate Number:* {row['plate_number'] or 'N/A'}\n"
-                summary_text += f"*Driver:* {row['driver_name'] or 'N/A'}\n"
-                summary_text += f"*Driver Mobile No:* {row['driver_mobile'] or 'N/A'}\n"
-                summary_text += f"*Passenger Name:* {row['passengers'] or 'N/A'}\n"
-                summary_text += f"*From (etd_1):* {row['etd_1'] or 'N/A'}\n"
-                summary_text += f"*To (etd_2):* {row['etd_2'] or 'N/A'}\n"
-                summary_text += "-----------------------------------\n"
-                
-            wa_link = generate_whatsapp_link("", summary_text)
-            st.link_button("📢 Send Transportation Summary to WhatsApp", wa_link)
-            
-            with st.expander("👁 Preview WhatsApp Summary Text"):
-                st.text(summary_text)
+        # 6. Daily / Recurring Journey Option (Regular User = Disabled "No", Admin = Selectable)
+        if is_admin:
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
+        else:
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
+
+    if st.button("Submit Transit Dispatch Request"):
+        if not disp_date_str:
+            st.error("❌ Submission Failed: Transit Date cannot be blank.")
+        elif not location_from or not location_to:
+            st.error("❌ Submission Failed: Origin and Target Locations cannot be blank.")
+        else:
+            conn = get_db_connection()
+            conn.execute('''
+                INSERT INTO daily_transit (transit_date, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (disp_date_str, selected_group, requested_by, etd_1, etd_2, location_from, location_to, is_daily))
+            conn.commit()
+            conn.close()
+            st.success(f"🎉 Transit dispatch successfully requested for {requested_by} on {disp_date_str}!")
+            st.rerun()
 
     st.markdown("---")
-    st.subheader(f"📊 Scheduled Dispatches for {disp_date_str}")
+    st.subheader("📊 Scheduled Transit Dispatches Log")
+    
+    conn = get_db_connection()
+    daily_df = pd.read_sql_query('''
+        SELECT id AS 'Dispatch ID', transit_date AS 'Transit Date', requested_by AS 'Requested By', 
+               group_name AS 'Group / Car', location_from AS 'Origin (From)', location_to AS 'Destination (To)', 
+               etd_1 AS 'ETD Start', etd_2 AS 'ETD Return', daily AS 'Daily Recurring'
+        FROM daily_transit
+        ORDER BY transit_date DESC, id DESC
+    ''', conn)
+    conn.close()
+    
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True)
         
-        # Changed export to Excel (.xlsx)
         dispatch_excel_bytes = export_df_to_excel(daily_df, sheet_name="Daily_Dispatches")
         st.download_button(
-            label="📥 Export Daily Schedule to Excel (.xlsx)",
+            label="📥 Export Daily Dispatch Log to Excel (.xlsx)",
             data=dispatch_excel_bytes,
-            file_name=f"Daily_Dispatch_Schedule_{disp_date_str}.xlsx",
+            file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.info("No transit groups scheduled for this date.")
+        st.info("No transit dispatches scheduled yet.")
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
@@ -872,7 +882,7 @@ with tab2:
             recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
-                st.error("⚠️️ Max 6 months recurrence limit exceeded.")
+                st.error("⚠️ Max 6 months recurrence limit exceeded.")
                 st.stop()
 
         if st.button("Confirm Room Block Assignment"):
@@ -933,7 +943,6 @@ with tab2:
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
         
-        # Changed export to Excel (.xlsx)
         rooms_excel_bytes = export_df_to_excel(bookings_df, sheet_name="Room_Bookings")
         st.download_button(
             label="📥 Export Room Bookings to Excel (.xlsx)",
@@ -1016,7 +1025,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
@@ -1044,7 +1053,8 @@ with tab3:
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
             column_config["passengers"] = st.column_config.SelectboxColumn("Passenger", options=emp_list)
         elif selected_table == "daily_transit":
-            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
+            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=["TBA"] + groups_list)
+            column_config["daily"] = st.column_config.SelectboxColumn("Daily Recurring", options=["Yes", "No"])
 
         st.markdown("💡 *Edit cells or use dropdowns where configured. Passwords are masked.*")
         
