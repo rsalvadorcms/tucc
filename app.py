@@ -33,26 +33,41 @@ LOGO2_PATH = "logo2.png"
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
-def show_transaction_status():
-    """Renders persistent database transaction success or failure alerts."""
-    if 'tx_status_msg' in st.session_state and st.session_state.tx_status_msg:
-        msg_type = st.session_state.get('tx_status_type', 'success')
-        if msg_type == 'success':
-            st.success(st.session_state.tx_status_msg)
-        elif msg_type == 'error':
-            st.error(st.session_state.tx_status_msg)
-        elif msg_type == 'info':
-            st.info(st.session_state.tx_status_msg)
+@st.dialog("Data Transaction Status")
+def show_transaction_dialog(title_text: str, message_text: str, status_type: str = "success"):
+    """Displays transaction outcome in a pop-up modal message box."""
+    if status_type == "success":
+        st.success(f"### {title_text}")
+    elif status_type == "error":
+        st.error(f"### {title_text}")
+    else:
+        st.info(f"### {title_text}")
         
-        # Clear after displaying once
-        del st.session_state['tx_status_msg']
-        if 'tx_status_type' in st.session_state:
-            del st.session_state['tx_status_type']
+    st.write(message_text)
+    
+    if st.button("OK", type="primary", use_container_width=True):
+        if 'tx_dialog_title' in st.session_state:
+            del st.session_state['tx_dialog_title']
+        if 'tx_dialog_msg' in st.session_state:
+            del st.session_state['tx_dialog_msg']
+        if 'tx_dialog_type' in st.session_state:
+            del st.session_state['tx_dialog_type']
+        st.rerun()
 
-def set_transaction_status(msg: str, msg_type: str = "success"):
-    """Stores transaction outcome message in session state across reruns."""
-    st.session_state.tx_status_msg = msg
-    st.session_state.tx_status_type = msg_type
+def trigger_transaction_dialog():
+    """Renders the modal popup box if status data exists in session state."""
+    if 'tx_dialog_title' in st.session_state and st.session_state.tx_dialog_title:
+        show_transaction_dialog(
+            st.session_state.tx_dialog_title,
+            st.session_state.get('tx_dialog_msg', ''),
+            st.session_state.get('tx_dialog_type', 'success')
+        )
+
+def set_transaction_dialog(title: str, message: str, status_type: str = "success"):
+    """Stores dialog notification parameters into session state."""
+    st.session_state.tx_dialog_title = title
+    st.session_state.tx_dialog_msg = message
+    st.session_state.tx_dialog_type = status_type
 
 def format_military_time(input_str: str) -> str:
     """
@@ -535,6 +550,9 @@ def run_migrations():
 
 run_migrations()
 
+# Check and render modal status popup dialog if queued in state
+trigger_transaction_dialog()
+
 # ==============================================================================
 # 🔐 2. AUTHENTICATION USER INTERFACE
 # ==============================================================================
@@ -588,7 +606,6 @@ tab1, tab1_b, tab1_c, tab2, tab3 = st.tabs(tabs)
 # --- TAB 1: OVERTIME REQUESTS ---
 with tab1:
     st.header("Request Overtime & Logistics Tracking")
-    show_transaction_status()
     
     conn = get_db_connection()
     holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
@@ -625,7 +642,7 @@ with tab1:
             default_origin = "Panbil"
             default_dest = "Yard-1 Office"
             default_dep_time_str = "07:00"
-            st.caption("ℹ️️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
+            st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
             default_start = time(17, 30)
             default_end = time(19, 0)
@@ -649,13 +666,13 @@ with tab1:
 
     if st.button("Submit New Overtime Request"):
         if not ot_date or not date_str:
-            set_transaction_status("❌ Data Transaction Unsuccessful: Target Date cannot be blank.", "error")
+            set_transaction_dialog("Data Transaction Unsuccessful", "Target Date cannot be left blank.", "error")
         elif start_time is None:
-            set_transaction_status("❌ Data Transaction Unsuccessful: OT Start Time cannot be blank.", "error")
+            set_transaction_dialog("Data Transaction Unsuccessful", "OT Start Time cannot be left blank.", "error")
         elif end_time is None:
-            set_transaction_status("❌ Data Transaction Unsuccessful: OT End Time cannot be blank.", "error")
+            set_transaction_dialog("Data Transaction Unsuccessful", "OT End Time cannot be left blank.", "error")
         elif not selected_staff_members:
-            set_transaction_status("❌ Data Transaction Unsuccessful: Please select at least one staff member.", "error")
+            set_transaction_dialog("Data Transaction Unsuccessful", "Please select at least one staff member.", "error")
         else:
             try:
                 start_time_military = start_time.strftime("%H:%M")
@@ -672,9 +689,9 @@ with tab1:
                 
                 conn.commit()
                 conn.close()
-                set_transaction_status(f"🎉 Data Transaction Successful! Overtime log saved for {len(selected_staff_members)} staff member(s).", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s).", "success")
             except Exception as e:
-                set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save record: {str(e)}", "error")
         st.rerun()
 
     st.subheader("📋 Overtime Submission History Log")
@@ -699,7 +716,6 @@ with tab1:
 # --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
 with tab1_b:
     st.header("👥 Transit Groups & Passengers Management")
-    show_transaction_status()
     
     conn = get_db_connection()
     drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
@@ -723,7 +739,7 @@ with tab1_b:
             etd2_grp_formatted = format_military_time(raw_etd2_grp)
             
             if not etd1_grp_formatted or not etd2_grp_formatted:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Invalid time format (e.g. 0545 or 1730).", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid time format. Please enter valid 24-hr military time (e.g. 0545 or 1730).", "error")
             elif selected_car_group != "No cars available" and selected_driver != "No drivers available":
                 try:
                     conn = get_db_connection()
@@ -731,13 +747,13 @@ with tab1_b:
                                  (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
                     conn.commit()
                     conn.close()
-                    set_transaction_status(f"🎉 Data Transaction Successful! Group '{selected_car_group}' created.", "success")
+                    set_transaction_dialog("Data Transaction Successful", f"Group '{selected_car_group}' has been created successfully.", "success")
                 except sqlite3.IntegrityError:
-                    set_transaction_status("❌ Data Transaction Unsuccessful: A group for this car already exists.", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", "A group for this car already exists in the system.", "error")
                 except Exception as e:
-                    set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save group: {str(e)}", "error")
             else:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Ensure valid Car and Driver are selected.", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Ensure valid Car and Driver options are selected.", "error")
             st.rerun()
 
     with col2:
@@ -755,11 +771,11 @@ with tab1_b:
                                          (selected_group_for_p, passenger))
                         conn.commit()
                         conn.close()
-                        set_transaction_status("🎉 Data Transaction Successful! Passengers assigned to group.", "success")
+                        set_transaction_dialog("Data Transaction Successful", "Passenger assignments were saved successfully.", "success")
                     except Exception as e:
-                        set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                        set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to assign passengers: {str(e)}", "error")
                 else:
-                    set_transaction_status("❌ Data Transaction Unsuccessful: Select at least one passenger.", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", "Please select at least one passenger.", "error")
                 st.rerun()
         else:
             st.info("Ensure Transit Groups are created and Users have 'emp_name' populated.")
@@ -818,7 +834,6 @@ with tab1_b:
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
     st.header("📅 Daily Transit Dispatch Schedule & Route Setting")
-    show_transaction_status()
     
     conn = get_db_connection()
     users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
@@ -936,15 +951,15 @@ with tab1_c:
             formatted_etd2 = format_military_time(raw_etd2)
             
             if not formatted_etd1:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Invalid ETD 1 Time Format (e.g., 0800 or 08:00).", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 1 Time Format (e.g., 0800 or 08:00).", "error")
             elif not formatted_etd2:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Invalid ETD 2 Time Format (e.g., 1700 or 17:00).", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 2 Time Format (e.g., 1700 or 17:00).", "error")
             elif not disp_date_start_str or not disp_date_end_str:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Transit Start and End Dates cannot be blank.", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Transit Start and End Dates cannot be left blank.", "error")
             elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Start Date must be earlier than End Date.", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Start Date must be strictly earlier than End Date.", "error")
             elif not location_from or not location_to:
-                set_transaction_status("❌ Data Transaction Unsuccessful: Origin and Target Locations cannot be blank.", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", "Origin and Target Locations cannot be left blank.", "error")
             else:
                 try:
                     conn = get_db_connection()
@@ -954,15 +969,15 @@ with tab1_c:
                     ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, location_from, location_to, is_daily))
                     conn.commit()
                     conn.close()
-                    set_transaction_status(f"🎉 Data Transaction Successful! Transit request submitted for {requested_by}.", "success")
+                    set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request successfully logged for {requested_by}.", "success")
                 except Exception as e:
-                    set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Database error: {str(e)}", "error")
             st.rerun()
 
     with b_col2:
         if st.button("🧹 Clear Form Inputs"):
             st.session_state.dispatch_reset_counter += 1
-            set_transaction_status("ℹ️ Form inputs reset to defaults.", "info")
+            set_transaction_dialog("Form Inputs Reset", "All input fields have been cleared and reset to default values.", "info")
             st.rerun()
 
     st.markdown("---")
@@ -1117,9 +1132,9 @@ with tab1_c:
                                 edit_fmt_etd2 = format_military_time(edit_raw_etd2)
                                 
                                 if not edit_fmt_etd1:
-                                    set_transaction_status("❌ Data Transaction Unsuccessful: Invalid ETD 1 Time Format.", "error")
+                                    set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 1 Time Format.", "error")
                                 elif not edit_fmt_etd2:
-                                    set_transaction_status("❌ Data Transaction Unsuccessful: Invalid ETD 2 Time Format.", "error")
+                                    set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 2 Time Format.", "error")
                                 else:
                                     try:
                                         conn = get_db_connection()
@@ -1130,9 +1145,9 @@ with tab1_c:
                                         ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
                                         conn.commit()
                                         conn.close()
-                                        set_transaction_status(f"🎉 Data Transaction Successful! Dispatch Record ID #{rec_id} updated.", "success")
+                                        set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been updated.", "success")
                                     except Exception as e:
-                                        set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                                        set_transaction_dialog("Data Transaction Unsuccessful", f"Update error: {str(e)}", "error")
                                 st.rerun()
 
                         with btn_col2:
@@ -1142,9 +1157,9 @@ with tab1_c:
                                     conn.execute("DELETE FROM daily_transit WHERE id=?", (rec_id,))
                                     conn.commit()
                                     conn.close()
-                                    set_transaction_status(f"🎉 Data Transaction Successful! Dispatch Record ID #{rec_id} deleted.", "success")
+                                    set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been permanently deleted.", "success")
                                 except Exception as e:
-                                    set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                                    set_transaction_dialog("Data Transaction Unsuccessful", f"Deletion error: {str(e)}", "error")
                                 st.rerun()
             else:
                 st.info("No dispatch records match your search filter criteria.")
@@ -1154,7 +1169,6 @@ with tab1_c:
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
     st.header("Meeting Space Reservations Desk")
-    show_transaction_status()
     
     conn = get_db_connection()
     rooms = conn.execute("SELECT * FROM meeting_rooms").fetchall()
@@ -1212,7 +1226,7 @@ with tab2:
                 ''', (selected_room_num, t_date_str, b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchall()
                 
                 if conflicts:
-                    set_transaction_status(f"❌ Data Transaction Unsuccessful: Schedule Collision on {t_date_str}!", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Schedule Collision on {t_date_str}!", "error")
                     conflict_detected = True
                     break
             
@@ -1226,9 +1240,9 @@ with tab2:
                               b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
                     
                     conn.commit()
-                    set_transaction_status(f"🎉 Data Transaction Successful! Room reserved across {len(target_dates)} intervals.", "success")
+                    set_transaction_dialog("Data Transaction Successful", f"Room successfully reserved across {len(target_dates)} scheduled interval(s).", "success")
                 except Exception as e:
-                    set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Booking error: {str(e)}", "error")
             conn.close()
             st.rerun()
 
@@ -1258,7 +1272,6 @@ with tab3:
         st.error("🛡️ Restricted Access Control: Admin clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
-        show_transaction_status()
         
         # --- EXCEL DATA IMPORT SECTION ---
         st.markdown("---")
@@ -1321,9 +1334,9 @@ with tab3:
                                 
                             conn.commit()
                             conn.close()
-                            set_transaction_status(f"🎉 Data Transaction Successful! Imported/updated {success_count} records in '{import_table}'.", "success")
+                            set_transaction_dialog("Data Transaction Successful", f"Imported/updated {success_count} record(s) into table '{import_table}'.", "success")
                         except Exception as e:
-                            set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                            set_transaction_dialog("Data Transaction Unsuccessful", f"Import failed: {str(e)}", "error")
                         st.rerun()
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
@@ -1389,7 +1402,7 @@ with tab3:
                     
                 conn.commit()
                 conn.close()
-                set_transaction_status(f"🎉 Data Transaction Successful! Master table '{selected_table}' updated.", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Master table '{selected_table}' has been updated successfully.", "success")
             except Exception as e:
-                set_transaction_status(f"❌ Data Transaction Failed: {str(e)}", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save table updates: {str(e)}", "error")
             st.rerun()
