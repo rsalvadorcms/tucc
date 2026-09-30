@@ -95,6 +95,34 @@ def format_military_time(input_str: str) -> str:
             
     return None
 
+def render_datalist_options(list_id: str, options: list):
+    """Renders HTML datalist element to enable combobox suggestions on standard text inputs."""
+    options_html = "".join([f'<option value="{opt}">' for opt in options if opt])
+    st.components.v1.html(
+        f"""
+        <script>
+        const parentDoc = window.parent.document;
+        let dl = parentDoc.getElementById('{list_id}');
+        if (!dl) {{
+            dl = parentDoc.createElement('datalist');
+            dl.id = '{list_id}';
+            parentDoc.body.appendChild(dl);
+        }}
+        dl.innerHTML = '{options_html}';
+        
+        // Attach datalist to text inputs with matching aria-label or placeholder
+        const inputs = parentDoc.querySelectorAll('input[type="text"]');
+        inputs.forEach(input => {{
+            if (input.placeholder && input.placeholder.includes('{list_id}')) {{
+                input.setAttribute('list', '{list_id}');
+            }}
+        }});
+        </script>
+        """,
+        height=0,
+        width=0
+    )
+
 def export_df_to_excel(df, sheet_name="Data"):
     """Generic helper function to export any pandas DataFrame to XLSX format."""
     buffer = io.BytesIO()
@@ -847,12 +875,11 @@ with tab1_c:
     
     default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport", "Harbour Bay Ferry Terminal"]
     
-    # Initialize origin and destination lists in session state to dynamically persist custom typed values
-    if "origin_options" not in st.session_state:
-        st.session_state.origin_options = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
-    
-    if "dest_options" not in st.session_state:
-        st.session_state.dest_options = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
+    origin_list = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
+    dest_list = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
+
+    render_datalist_options("origin_list_dl", origin_list)
+    render_datalist_options("dest_list_dl", dest_list)
 
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
     if not all_emp_names:
@@ -913,40 +940,22 @@ with tab1_c:
             disp_date_end_str = disp_date_start_str
             st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
-        # Origin Combobox with Auto-Add Capability
-        default_origin_val = None if reset_id > 0 else ("Yard-1 Office" if "Yard-1 Office" in st.session_state.origin_options else None)
-        origin_idx = st.session_state.origin_options.index(default_origin_val) if default_origin_val in st.session_state.origin_options else None
-        
-        def handle_new_origin():
-            val = st.session_state.get(f"sel_loc_from_{reset_id}")
-            if val and val not in st.session_state.origin_options:
-                st.session_state.origin_options.insert(0, val)
+        default_origin_text = "" if reset_id > 0 else "Yard-1 Office"
+        default_dest_text = "" if reset_id > 0 else "Yard-3 Office"
 
-        location_from = st.selectbox(
-            "Origin Location (Type custom or pick from list)", 
-            options=st.session_state.origin_options, 
-            index=origin_idx,
-            placeholder="Type new origin or select...",
-            key=f"sel_loc_from_{reset_id}",
-            on_change=handle_new_origin
+        # Combobox Direct Free-Text Input Field with Datalist Suggestions
+        location_from = st.text_input(
+            "Origin Location (Type any custom text or select suggestion)", 
+            value=default_origin_text,
+            placeholder="[origin_list_dl] Type origin location...",
+            key=f"txt_origin_{reset_id}"
         )
 
-        # Target Combobox with Auto-Add Capability
-        default_target_val = None if reset_id > 0 else ("Yard-3 Office" if "Yard-3 Office" in st.session_state.dest_options else None)
-        dest_idx = st.session_state.dest_options.index(default_target_val) if default_target_val in st.session_state.dest_options else None
-
-        def handle_new_target():
-            val = st.session_state.get(f"sel_loc_to_{reset_id}")
-            if val and val not in st.session_state.dest_options:
-                st.session_state.dest_options.insert(0, val)
-
-        location_to = st.selectbox(
-            "Target Location (Type custom or pick from list)", 
-            options=st.session_state.dest_options, 
-            index=dest_idx,
-            placeholder="Type new destination or select...",
-            key=f"sel_loc_to_{reset_id}",
-            on_change=handle_new_target
+        location_to = st.text_input(
+            "Target Location (Type any custom text or select suggestion)", 
+            value=default_dest_text,
+            placeholder="[dest_list_dl] Type target location...",
+            key=f"txt_dest_{reset_id}"
         )
 
     with col2:
@@ -991,13 +1000,6 @@ with tab1_c:
                     ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, str(location_from).strip(), str(location_to).strip(), is_daily))
                     conn.commit()
                     conn.close()
-                    
-                    # Store to dynamic options state
-                    if str(location_from).strip() not in st.session_state.origin_options:
-                        st.session_state.origin_options.append(str(location_from).strip())
-                    if str(location_to).strip() not in st.session_state.dest_options:
-                        st.session_state.dest_options.append(str(location_to).strip())
-                        
                     set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request successfully logged for {requested_by}.", "success")
                 except Exception as e:
                     set_transaction_dialog("Data Transaction Unsuccessful", f"Database error: {str(e)}", "error")
@@ -1130,14 +1132,8 @@ with tab1_c:
                                 edit_dt_end = edit_dt_start
                                 st.caption("ℹ️ Non-recurring: Date End automatically set to Date Start.")
 
-                            # Ensure existing values exist in state lists so edit dropdown displays properly
-                            if row['location_from'] and row['location_from'] not in st.session_state.origin_options:
-                                st.session_state.origin_options.append(row['location_from'])
-                            if row['location_to'] and row['location_to'] not in st.session_state.dest_options:
-                                st.session_state.dest_options.append(row['location_to'])
-
-                            edit_loc_from = st.selectbox("Origin Location", options=st.session_state.origin_options, index=st.session_state.origin_options.index(row['location_from']) if row['location_from'] in st.session_state.origin_options else None, placeholder="Type or select Origin...", key=f"e_sel_loc_from_{rec_id}")
-                            edit_loc_to = st.selectbox("Target Location", options=st.session_state.dest_options, index=st.session_state.dest_options.index(row['location_to']) if row['location_to'] in st.session_state.dest_options else None, placeholder="Type or select Target...", key=f"e_sel_loc_to_{rec_id}")
+                            edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "", placeholder="[origin_list_dl]", key=f"e_loc_from_{rec_id}")
+                            edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "", placeholder="[dest_list_dl]", key=f"e_loc_to_{rec_id}")
 
                         with e_col2:
                             edit_raw_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
