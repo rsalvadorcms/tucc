@@ -5,6 +5,7 @@ import io
 import urllib.parse
 import string
 import os
+import re
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -31,6 +32,33 @@ LOGO2_PATH = "logo2.png"
 # ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
+
+def format_military_time(input_str: str) -> str:
+    """
+    Cleans user input and enforces 24-hour military time HH:MM format.
+    Accepts raw digits like '800' -> '08:00', '1730' -> '17:30', or '8:00' -> '08:00'.
+    Returns None if the input is completely invalid.
+    """
+    if not input_str:
+        return ""
+    
+    # Strip non-numeric characters
+    clean_digits = re.sub(r'\D', '', str(input_str).strip())
+    
+    if len(clean_digits) == 3: # e.g. 800 -> 0800
+        clean_digits = "0" + clean_digits
+    elif len(clean_digits) == 1: # e.g. 8 -> 0800
+        clean_digits = "0" + clean_digits + "00"
+    elif len(clean_digits) == 2: # e.g. 17 -> 1700
+        clean_digits = clean_digits + "00"
+        
+    if len(clean_digits) == 4:
+        hours = int(clean_digits[:2])
+        minutes = int(clean_digits[2:])
+        if 0 <= hours <= 23 and 0 <= minutes <= 59:
+            return f"{hours:02d}:{minutes:02d}"
+            
+    return None
 
 def export_df_to_excel(df, sheet_name="Data"):
     """Generic helper function to export any pandas DataFrame to XLSX format."""
@@ -680,15 +708,21 @@ with tab1_b:
         st.subheader("1. Create Transit Group")
         selected_car_group = st.selectbox("Group Name (Select from Cars)", cars_list if cars_list else ["No cars available"], key="g_car_select")
         selected_driver = st.selectbox("Assign Driver (from Fleet Drivers)", drivers_list if drivers_list else ["No drivers available"])
-        etd_1 = st.text_input("ETD 1 (From)", value="05:45")
-        etd_2 = st.text_input("ETD 2 (To)", value="17:30")
+        
+        raw_etd1_grp = st.text_input("ETD 1 (From) [e.g. 0545 or 05:45]", value="05:45", key="grp_etd1_in")
+        raw_etd2_grp = st.text_input("ETD 2 (To) [e.g. 1730 or 17:30]", value="17:30", key="grp_etd2_in")
         
         if st.button("Save Transit Group"):
-            if selected_car_group != "No cars available" and selected_driver != "No drivers available":
+            etd1_grp_formatted = format_military_time(raw_etd1_grp)
+            etd2_grp_formatted = format_military_time(raw_etd2_grp)
+            
+            if not etd1_grp_formatted or not etd2_grp_formatted:
+                st.error("❌ Invalid Time Format: Please enter valid 24-hr military time (e.g. 0545 or 1730).")
+            elif selected_car_group != "No cars available" and selected_driver != "No drivers available":
                 try:
                     conn = get_db_connection()
                     conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)",
-                                 (selected_car_group, selected_driver, etd_1, etd_2))
+                                 (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
                     conn.commit()
                     conn.close()
                     st.success(f"Group '{selected_car_group}' created successfully!")
@@ -778,7 +812,6 @@ with tab1_c:
     users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
     all_emp_names = users_df['emp_name'].tolist()
     
-    # Query cars table to extract car_name, plate_number, and vehicle details for dropdown display
     cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
     conn.close()
     
@@ -835,7 +868,7 @@ with tab1_c:
         else:
             dispatch_date_end = dispatch_date_start
             disp_date_end_str = disp_date_start_str
-            st.caption("ℹ️️ Single journey request: **Transit End Date automatically set to Start Date**.")
+            st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
         location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
         location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
@@ -843,8 +876,9 @@ with tab1_c:
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
         
-        etd_1 = st.text_input("ETD 1 (Start Time)", value="08:00")
-        etd_2 = st.text_input("ETD 2 (Return Time)", value="17:00")
+        # Strict Military Time inputs (Auto-formatting support)
+        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value="08:00", placeholder="0800 or 08:00")
+        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value="17:00", placeholder="1700 or 17:00")
         
         if is_admin:
             selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0)
@@ -854,7 +888,14 @@ with tab1_c:
             selected_group = "TBA"
 
     if st.button("Submit Transit Dispatch Request"):
-        if not disp_date_start_str or not disp_date_end_str:
+        formatted_etd1 = format_military_time(raw_etd1)
+        formatted_etd2 = format_military_time(raw_etd2)
+        
+        if not formatted_etd1:
+            st.error("❌ Invalid ETD 1 Time Format: Please enter a valid military time (e.g., 0800 or 08:00).")
+        elif not formatted_etd2:
+            st.error("❌ Invalid ETD 2 Time Format: Please enter a valid military time (e.g., 1700 or 17:00).")
+        elif not disp_date_start_str or not disp_date_end_str:
             st.error("❌ Submission Failed: Transit Start and End Dates cannot be blank.")
         elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
             st.error("❌ Submission Failed: For daily recurring journeys, Start Date must be strictly earlier than End Date.")
@@ -865,7 +906,7 @@ with tab1_c:
             conn.execute('''
                 INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, etd_1, etd_2, location_from, location_to, is_daily))
+            ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, location_from, location_to, is_daily))
             conn.commit()
             conn.close()
             st.success(f"🎉 Transit dispatch successfully requested for {requested_by} ({disp_date_start_str} to {disp_date_end_str})!")
@@ -888,7 +929,6 @@ with tab1_c:
     if not daily_raw_df.empty:
         display_df = daily_raw_df.copy()
         
-        # Combine group_name and plate_number for log display readability
         display_df['Group / Car'] = display_df.apply(
             lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'],
             axis=1
@@ -998,8 +1038,8 @@ with tab1_c:
                             edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
 
                         with e_col2:
-                            edit_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
-                            edit_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
+                            edit_raw_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
+                            edit_raw_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
                             
                             curr_grp_code = row['group_name'] if row['group_name'] in car_group_to_label else "TBA"
                             curr_car_label = car_group_to_label.get(curr_grp_code, "TBA - To Be Assigned")
@@ -1011,16 +1051,24 @@ with tab1_c:
                         
                         with btn_col1:
                             if st.button("💾 Save Changes", key=f"btn_save_{rec_id}"):
-                                conn = get_db_connection()
-                                conn.execute('''
-                                    UPDATE daily_transit
-                                    SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
-                                    WHERE id=?
-                                ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
-                                conn.commit()
-                                conn.close()
-                                st.success(f"Record ID #{rec_id} updated successfully!")
-                                st.rerun()
+                                edit_fmt_etd1 = format_military_time(edit_raw_etd1)
+                                edit_fmt_etd2 = format_military_time(edit_raw_etd2)
+                                
+                                if not edit_fmt_etd1:
+                                    st.error("❌ Invalid ETD 1 Time Format: Please enter a valid military time (e.g., 0800 or 08:00).")
+                                elif not edit_fmt_etd2:
+                                    st.error("❌ Invalid ETD 2 Time Format: Please enter a valid military time (e.g., 1700 or 17:00).")
+                                else:
+                                    conn = get_db_connection()
+                                    conn.execute('''
+                                        UPDATE daily_transit
+                                        SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
+                                        WHERE id=?
+                                    ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
+                                    conn.commit()
+                                    conn.close()
+                                    st.success(f"Record ID #{rec_id} updated successfully!")
+                                    st.rerun()
 
                         with btn_col2:
                             if st.button("🗑️ Delete Record", key=f"btn_del_{rec_id}", type="primary"):
