@@ -908,10 +908,12 @@ with tab1_c:
             disp_date_end_str = disp_date_start_str
             st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
+        # Default value index 0 ("Custom / Manual Entry...") when reset, otherwise preset
+        loc_from_idx = 0 if reset_id > 0 else (1 if "Yard-1 Office" in existing_origins else 0)
         sel_loc_from = st.selectbox(
             "Origin Location (Select standard location or enter custom below)", 
             options=["Custom / Manual Entry..."] + existing_origins, 
-            index=1 if "Yard-1 Office" in existing_origins else 0,
+            index=loc_from_idx,
             key=f"sel_loc_from_{reset_id}"
         )
         if sel_loc_from == "Custom / Manual Entry...":
@@ -919,10 +921,11 @@ with tab1_c:
         else:
             location_from = sel_loc_from
 
+        loc_to_idx = 0 if reset_id > 0 else (1 if "Yard-3 Office" in existing_dests else 0)
         sel_loc_to = st.selectbox(
             "Target Location (Select standard location or enter custom below)", 
             options=["Custom / Manual Entry..."] + existing_dests, 
-            index=1 if "Yard-3 Office" in existing_dests else 0,
+            index=loc_to_idx,
             key=f"sel_loc_to_{reset_id}"
         )
         if sel_loc_to == "Custom / Manual Entry...":
@@ -933,8 +936,11 @@ with tab1_c:
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
         
-        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value="08:00", placeholder="0800 or 08:00", key=f"etd1_{reset_id}")
-        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value="17:00", placeholder="1700 or 17:00", key=f"etd2_{reset_id}")
+        default_etd1_val = "" if reset_id > 0 else "08:00"
+        default_etd2_val = "" if reset_id > 0 else "17:00"
+        
+        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value=default_etd1_val, placeholder="0800 or 08:00", key=f"etd1_{reset_id}")
+        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value=default_etd2_val, placeholder="1700 or 17:00", key=f"etd2_{reset_id}")
         
         if is_admin:
             selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0, key=f"car_{reset_id}")
@@ -977,7 +983,6 @@ with tab1_c:
     with b_col2:
         if st.button("🧹 Clear Form Inputs"):
             st.session_state.dispatch_reset_counter += 1
-            set_transaction_dialog("Form Inputs Reset", "All input fields have been cleared and reset to default values.", "info")
             st.rerun()
 
     st.markdown("---")
