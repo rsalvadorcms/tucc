@@ -101,7 +101,7 @@ def init_db():
         )
     ''')
 
-    # 6. cars table (NEW)
+    # 6. cars table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cars (
             car_name TEXT PRIMARY KEY,
@@ -110,7 +110,7 @@ def init_db():
         )
     ''')
 
-    # 7. fleet_drivers table (plate_number and vehicle removed)
+    # 7. fleet_drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -118,7 +118,7 @@ def init_db():
         )
     ''')
 
-    # 8. transit_groups table
+    # 8. transit_groups table (group_name references cars.car_name)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,6 +126,7 @@ def init_db():
             driver_name TEXT,
             etd_1 TEXT,
             etd_2 TEXT,
+            FOREIGN KEY (group_name) REFERENCES cars(car_name) ON DELETE CASCADE,
             FOREIGN KEY (driver_name) REFERENCES fleet_drivers(driver_name) ON DELETE SET NULL
         )
     ''')
@@ -180,23 +181,20 @@ def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Check fleet_drivers table: if plate_number still exists, migrate to cars table before dropping
+    # Check fleet_drivers table
     cursor.execute("PRAGMA table_info(fleet_drivers)")
     fd_cols = [col[1] for col in cursor.fetchall()]
     
     if "plate_number" in fd_cols:
-        # Fetch existing unique plate numbers and vehicles
         cursor.execute("SELECT DISTINCT plate_number, vehicle FROM fleet_drivers WHERE plate_number IS NOT NULL AND plate_number != ''")
         existing_cars = cursor.fetchall()
         
-        # Populate new cars table with generated names
         for idx, car in enumerate(existing_cars):
             c_name = generate_car_name(idx)
             p_num = car['plate_number']
             v_type = car['vehicle'] if 'vehicle' in fd_cols and car['vehicle'] else 'Standard Vehicle'
             cursor.execute("INSERT OR IGNORE INTO cars (car_name, plate_number, vehicle) VALUES (?, ?, ?)", (c_name, p_num, v_type))
             
-        # Recreate fleet_drivers table without plate_number and vehicle
         cursor.execute('''
             CREATE TABLE fleet_drivers_new (
                 driver_name TEXT PRIMARY KEY,
@@ -332,6 +330,7 @@ with tab1_b:
     
     conn = get_db_connection()
     drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+    cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
     employees_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
     groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
     conn.close()
@@ -340,25 +339,26 @@ with tab1_b:
     
     with col1:
         st.subheader("1. Create Transit Group")
-        g_name = st.text_input("Group Name (e.g., Alpha Shuttles, Route 1)", key="g_name_input")
+        # Select group_name from cars table field car_name
+        selected_car_group = st.selectbox("Group Name (Select from Cars)", cars_list if cars_list else ["No cars available"], key="g_car_select")
         selected_driver = st.selectbox("Assign Driver (from Fleet Drivers)", drivers_list if drivers_list else ["No drivers available"])
         etd_1 = st.text_input("ETD 1 (From)", value="05:45")
         etd_2 = st.text_input("ETD 2 (To)", value="17:30")
         
         if st.button("Save Transit Group"):
-            if g_name.strip() and selected_driver != "No drivers available":
+            if selected_car_group != "No cars available" and selected_driver != "No drivers available":
                 try:
                     conn = get_db_connection()
                     conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)",
-                                 (g_name.strip(), selected_driver, etd_1, etd_2))
+                                 (selected_car_group, selected_driver, etd_1, etd_2))
                     conn.commit()
                     conn.close()
-                    st.success(f"Group '{g_name}' created successfully!")
+                    st.success(f"Group '{selected_car_group}' created successfully!")
                     st.rerun()
                 except sqlite3.IntegrityError:
-                    st.error("A group with this name already exists.")
+                    st.error("A group for this car already exists.")
             else:
-                st.error("Please provide a valid Group Name and select a Driver.")
+                st.error("Please ensure a valid Car and Driver are selected.")
 
     with col2:
         st.subheader("2. Assign Passengers to Group")
@@ -385,9 +385,10 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     groups_df = pd.read_sql_query('''
-        SELECT tg.id, tg.group_name, tg.driver_name, fd.driver_mobile, 
+        SELECT tg.id, tg.group_name, c.vehicle, c.plate_number, tg.driver_name, fd.driver_mobile, 
                tg.etd_1, tg.etd_2, GROUP_CONCAT(tp.passengers, ', ') AS passengers
         FROM transit_groups tg
+        LEFT JOIN cars c ON tg.group_name = c.car_name
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
         GROUP BY tg.id
@@ -432,32 +433,25 @@ with tab1_c:
         
         conn = get_db_connection()
         daily_df = pd.read_sql_query('''
-            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name,
+            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name, c.vehicle, c.plate_number,
                    tg.driver_name, fd.driver_mobile, tg.etd_1, tg.etd_2, 
                    GROUP_CONCAT(tp.passengers, ', ') AS passengers
             FROM daily_transit dt
             JOIN transit_groups tg ON dt.group_name = tg.group_name
+            LEFT JOIN cars c ON tg.group_name = c.car_name
             LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
             LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
             WHERE dt.transit_date = ?
             GROUP BY dt.id
         ''', conn, params=[filter_date_str])
-        
-        # Fetch registered cars for context
-        cars_df = pd.read_sql_query("SELECT * FROM cars", conn)
         conn.close()
         
         if not daily_df.empty:
             summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
-                # Cross-reference car info if available
-                car_info = cars_df.iloc[idx % len(cars_df)] if not cars_df.empty else None
-                v_name = car_info['vehicle'] if car_info is not None else 'N/A'
-                p_num = car_info['plate_number'] if car_info is not None else 'N/A'
-                
-                summary_text += f"*Vehicle:* {v_name}\n"
-                summary_text += f"*Plate Number:* {p_num}\n"
+                summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
+                summary_text += f"*Plate Number:* {row['plate_number'] or 'N/A'}\n"
                 summary_text += f"*Driver:* {row['driver_name'] or 'N/A'}\n"
                 summary_text += f"*Driver Mobile No:* {row['driver_mobile'] or 'N/A'}\n"
                 summary_text += f"*Passenger Name:* {row['passengers'] or 'N/A'}\n"
@@ -653,6 +647,7 @@ with tab3:
             table_df["password"] = "••••••••"
 
         drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+        cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
         groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
         conn.close()
@@ -661,6 +656,7 @@ with tab3:
         if selected_table == "overtime_requests":
             column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
         elif selected_table == "transit_groups":
+            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name (Car)", options=cars_list)
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
         elif selected_table == "transit_passengers":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
