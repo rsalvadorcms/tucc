@@ -3,6 +3,7 @@ import pandas as pd
 import sqlite3
 import io
 import urllib.parse
+import string
 from datetime import datetime, date, timedelta, time
 
 # Set page configurations with native default theme formatting
@@ -21,6 +22,15 @@ def generate_whatsapp_link(phone_number, text):
         return f"https://wa.me/{clean_phone}?text={encoded_text}"
     else:
         return f"https://api.whatsapp.com/send?text={encoded_text}"
+
+def generate_car_name(index):
+    """Generates sequential car names: Car A, Car B ... Car Z, Car AA, etc."""
+    if index < 26:
+        return f"Car {string.ascii_uppercase[index]}"
+    else:
+        first = string.ascii_uppercase[(index // 26) - 1]
+        second = string.ascii_uppercase[index % 26]
+        return f"Car {first}{second}"
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -91,17 +101,24 @@ def init_db():
         )
     ''')
 
-    # 6. fleet_drivers table
+    # 6. cars table (NEW)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS fleet_drivers (
-            driver_name TEXT PRIMARY KEY,
-            driver_mobile TEXT,
-            plate_number TEXT,
+        CREATE TABLE IF NOT EXISTS cars (
+            car_name TEXT PRIMARY KEY,
+            plate_number TEXT UNIQUE NOT NULL,
             vehicle TEXT
         )
     ''')
 
-    # 7. transit_groups table
+    # 7. fleet_drivers table (plate_number and vehicle removed)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS fleet_drivers (
+            driver_name TEXT PRIMARY KEY,
+            driver_mobile TEXT
+        )
+    ''')
+
+    # 8. transit_groups table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,7 +130,7 @@ def init_db():
         )
     ''')
 
-    # 8. transit_passengers table
+    # 9. transit_passengers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_passengers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +140,7 @@ def init_db():
         )
     ''')
 
-    # 9. daily_transit table
+    # 10. daily_transit table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,8 +162,13 @@ def init_db():
 
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333', 'B 1234 ABC', 'Toyota Avanza')")
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777', 'B 5678 XYZ', 'Toyota Innova')")
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333')")
+        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777')")
+
+    cursor.execute("SELECT COUNT(*) FROM cars")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO cars VALUES ('Car A', 'B 1234 ABC', 'Toyota Avanza')")
+        cursor.execute("INSERT INTO cars VALUES ('Car B', 'B 5678 XYZ', 'Toyota Innova')")
         
     conn.commit()
     conn.close()
@@ -158,37 +180,32 @@ def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Check fleet_drivers table for vehicle column
+    # Check fleet_drivers table: if plate_number still exists, migrate to cars table before dropping
     cursor.execute("PRAGMA table_info(fleet_drivers)")
     fd_cols = [col[1] for col in cursor.fetchall()]
-    if "vehicle" not in fd_cols:
-        cursor.execute("ALTER TABLE fleet_drivers ADD COLUMN vehicle TEXT")
-
-    # Check overtime_requests table to remove plate_number column if still present
-    cursor.execute("PRAGMA table_info(overtime_requests)")
-    ot_cols = [col[1] for col in cursor.fetchall()]
-    if "plate_number" in ot_cols:
+    
+    if "plate_number" in fd_cols:
+        # Fetch existing unique plate numbers and vehicles
+        cursor.execute("SELECT DISTINCT plate_number, vehicle FROM fleet_drivers WHERE plate_number IS NOT NULL AND plate_number != ''")
+        existing_cars = cursor.fetchall()
+        
+        # Populate new cars table with generated names
+        for idx, car in enumerate(existing_cars):
+            c_name = generate_car_name(idx)
+            p_num = car['plate_number']
+            v_type = car['vehicle'] if 'vehicle' in fd_cols and car['vehicle'] else 'Standard Vehicle'
+            cursor.execute("INSERT OR IGNORE INTO cars (car_name, plate_number, vehicle) VALUES (?, ?, ?)", (c_name, p_num, v_type))
+            
+        # Recreate fleet_drivers table without plate_number and vehicle
         cursor.execute('''
-            CREATE TABLE overtime_requests_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT,
-                ot_date TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                needs_transport TEXT DEFAULT 'Yes',
-                origin TEXT,
-                destination TEXT,
-                departure_time TEXT,
-                return_time TEXT
+            CREATE TABLE fleet_drivers_new (
+                driver_name TEXT PRIMARY KEY,
+                driver_mobile TEXT
             )
         ''')
-        cursor.execute('''
-            INSERT INTO overtime_requests_new (id, username, ot_date, start_time, end_time, needs_transport, origin, destination, departure_time, return_time)
-            SELECT id, username, ot_date, start_time, end_time, needs_transport, origin, destination, departure_time, return_time
-            FROM overtime_requests
-        ''')
-        cursor.execute("DROP TABLE overtime_requests")
-        cursor.execute("ALTER TABLE overtime_requests_new RENAME TO overtime_requests")
+        cursor.execute("INSERT INTO fleet_drivers_new (driver_name, driver_mobile) SELECT driver_name, driver_mobile FROM fleet_drivers")
+        cursor.execute("DROP TABLE fleet_drivers")
+        cursor.execute("ALTER TABLE fleet_drivers_new RENAME TO fleet_drivers")
 
     conn.commit()
     conn.close()
@@ -368,7 +385,7 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     groups_df = pd.read_sql_query('''
-        SELECT tg.id, tg.group_name, fd.vehicle, fd.plate_number, tg.driver_name, fd.driver_mobile, 
+        SELECT tg.id, tg.group_name, tg.driver_name, fd.driver_mobile, 
                tg.etd_1, tg.etd_2, GROUP_CONCAT(tp.passengers, ', ') AS passengers
         FROM transit_groups tg
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
@@ -415,7 +432,7 @@ with tab1_c:
         
         conn = get_db_connection()
         daily_df = pd.read_sql_query('''
-            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name, fd.vehicle, fd.plate_number, 
+            SELECT dt.id AS daily_id, dt.transit_date, tg.group_name,
                    tg.driver_name, fd.driver_mobile, tg.etd_1, tg.etd_2, 
                    GROUP_CONCAT(tp.passengers, ', ') AS passengers
             FROM daily_transit dt
@@ -425,14 +442,22 @@ with tab1_c:
             WHERE dt.transit_date = ?
             GROUP BY dt.id
         ''', conn, params=[filter_date_str])
+        
+        # Fetch registered cars for context
+        cars_df = pd.read_sql_query("SELECT * FROM cars", conn)
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
-                summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'}\n"
-                summary_text += f"*Plate Number:* {row['plate_number'] or 'N/A'}\n"
+                # Cross-reference car info if available
+                car_info = cars_df.iloc[idx % len(cars_df)] if not cars_df.empty else None
+                v_name = car_info['vehicle'] if car_info is not None else 'N/A'
+                p_num = car_info['plate_number'] if car_info is not None else 'N/A'
+                
+                summary_text += f"*Vehicle:* {v_name}\n"
+                summary_text += f"*Plate Number:* {p_num}\n"
                 summary_text += f"*Driver:* {row['driver_name'] or 'N/A'}\n"
                 summary_text += f"*Driver Mobile No:* {row['driver_mobile'] or 'N/A'}\n"
                 summary_text += f"*Passenger Name:* {row['passengers'] or 'N/A'}\n"
@@ -552,12 +577,13 @@ with tab3:
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
         
-        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers"], key="import_tbl_sel")
+        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "fleet_drivers", "cars"], key="import_tbl_sel")
         
         table_schemas = {
             "users": ["username", "password", "role", "email_recipients", "emp_name"],
             "holidays": ["holiday_date", "description"],
-            "fleet_drivers": ["driver_name", "driver_mobile", "plate_number", "vehicle"]
+            "fleet_drivers": ["driver_name", "driver_mobile"],
+            "cars": ["car_name", "plate_number", "vehicle"]
         }
         
         req_cols = table_schemas[import_table]
@@ -614,7 +640,7 @@ with tab3:
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
-        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "transit_groups", "transit_passengers", "daily_transit"]
+        table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
         conn = get_db_connection()
@@ -624,7 +650,6 @@ with tab3:
         original_passwords = {}
         if selected_table == "users":
             original_passwords = dict(zip(table_df["username"], table_df["password"]))
-            # Visually mask passwords in display table
             table_df["password"] = "••••••••"
 
         drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
@@ -656,7 +681,6 @@ with tab3:
             for _, row in edited_df.iterrows():
                 row_dict = row.to_dict()
                 
-                # Restore unedited masked passwords for 'users'
                 if selected_table == "users":
                     u_name = row_dict.get("username")
                     if row_dict.get("password") == "••••••••":
