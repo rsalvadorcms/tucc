@@ -780,37 +780,28 @@ with tab1_c:
     with col1:
         st.subheader("Configure Transit Request")
         
-        # 1. Requested By
         requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by))
         
-        # 2. Transit Date Restricted to Today -> Today + 30 days
         min_date = date.today()
         max_date = min_date + timedelta(days=30)
         dispatch_date = st.date_input("Select Transit Date", value=min_date, min_value=min_date, max_value=max_date)
         disp_date_str = dispatch_date.strftime("%Y-%m-%d") if dispatch_date else ""
         
-        # 3. Location From & Location To
         location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
         location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
 
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
         
-        # 4. ETD 1 (Start) & ETD 2 (Return)
         etd_1 = st.text_input("ETD 1 (Start Time)", value="08:00")
         etd_2 = st.text_input("ETD 2 (Return Time)", value="17:00")
         
-        # 5. Group Name Selection (Regular User = Disabled "TBA", Admin = Selectable)
         group_options = ["TBA"] + available_groups
         if is_admin:
             selected_group = st.selectbox("Assigned Group / Car Name", options=group_options, index=0)
-        else:
-            selected_group = st.selectbox("Assigned Group / Car Name", options=["TBA"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
-            
-        # 6. Daily / Recurring Journey Option (Regular User = Disabled "No", Admin = Selectable)
-        if is_admin:
             is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
         else:
+            selected_group = st.selectbox("Assigned Group / Car Name", options=["TBA"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
             is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
 
     if st.button("Submit Transit Dispatch Request"):
@@ -833,25 +824,91 @@ with tab1_c:
     st.subheader("📊 Scheduled Transit Dispatches Log")
     
     conn = get_db_connection()
-    daily_df = pd.read_sql_query('''
-        SELECT id AS 'Dispatch ID', transit_date AS 'Transit Date', requested_by AS 'Requested By', 
-               group_name AS 'Group / Car', location_from AS 'Origin (From)', location_to AS 'Destination (To)', 
-               etd_1 AS 'ETD Start', etd_2 AS 'ETD Return', daily AS 'Daily Recurring'
-        FROM daily_transit
-        ORDER BY transit_date DESC, id DESC
-    ''', conn)
+    daily_raw_df = pd.read_sql_query("SELECT * FROM daily_transit ORDER BY transit_date DESC, id DESC", conn)
     conn.close()
     
-    if not daily_df.empty:
-        st.dataframe(daily_df, use_container_width=True)
+    if not daily_raw_df.empty:
+        # Exportable formatted DataFrame
+        export_df = daily_raw_df.rename(columns={
+            "id": "Dispatch ID",
+            "transit_date": "Transit Date",
+            "requested_by": "Requested By",
+            "group_name": "Group / Car",
+            "location_from": "Origin (From)",
+            "location_to": "Destination (To)",
+            "etd_1": "ETD Start",
+            "etd_2": "ETD Return",
+            "daily": "Daily Recurring"
+        })
         
-        dispatch_excel_bytes = export_df_to_excel(daily_df, sheet_name="Daily_Dispatches")
+        st.dataframe(export_df, use_container_width=True)
+        
+        dispatch_excel_bytes = export_df_to_excel(export_df, sheet_name="Daily_Dispatches")
         st.download_button(
             label="📥 Export Daily Dispatch Log to Excel (.xlsx)",
             data=dispatch_excel_bytes,
             file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+        # Admin Edit & Delete Management Console
+        if is_admin:
+            st.markdown("---")
+            st.subheader("🛠️ Admin Management: Edit / Delete Dispatch Records")
+            
+            group_options_all = ["TBA"] + available_groups
+            
+            for idx, row in daily_raw_df.iterrows():
+                rec_id = row['id']
+                rec_title = f"ID #{rec_id} | {row['transit_date']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
+                
+                with st.expander(f"✏️ Manage Record: {rec_title}"):
+                    e_col1, e_col2 = st.columns(2)
+                    
+                    with e_col1:
+                        try:
+                            curr_dt_obj = datetime.strptime(row['transit_date'], "%Y-%m-%d").date()
+                        except (ValueError, TypeError):
+                            curr_dt_obj = date.today()
+                            
+                        edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
+                        edit_date = st.date_input("Transit Date", value=curr_dt_obj, key=f"e_dt_{rec_id}")
+                        edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "Yard-1 Office", key=f"e_loc_from_{rec_id}")
+                        edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
+
+                    with e_col2:
+                        edit_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
+                        edit_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
+                        
+                        curr_grp = row['group_name'] if row['group_name'] in group_options_all else "TBA"
+                        edit_grp = st.selectbox("Group / Car Name", options=group_options_all, index=group_options_all.index(curr_grp), key=f"e_grp_{rec_id}")
+                        
+                        curr_daily = row['daily'] if row['daily'] in ["Yes", "No"] else "No"
+                        edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(curr_daily), key=f"e_daily_{rec_id}")
+
+                    btn_col1, btn_col2 = st.columns([1, 4])
+                    
+                    with btn_col1:
+                        if st.button("💾 Save Changes", key=f"btn_save_{rec_id}"):
+                            conn = get_db_connection()
+                            conn.execute('''
+                                UPDATE daily_transit
+                                SET transit_date=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
+                                WHERE id=?
+                            ''', (edit_date.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Record ID #{rec_id} updated successfully!")
+                            st.rerun()
+
+                    with btn_col2:
+                        if st.button("🗑️ Delete Record", key=f"btn_del_{rec_id}", type="primary"):
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM daily_transit WHERE id=?", (rec_id,))
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Record ID #{rec_id} deleted!")
+                            st.rerun()
     else:
         st.info("No transit dispatches scheduled yet.")
 
@@ -1025,7 +1082,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
