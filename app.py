@@ -28,7 +28,7 @@ LOGO1_PATH = "logo.png"
 LOGO2_PATH = "logo2.png"
 
 # ==============================================================================
-# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
+# ⚙️️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
@@ -53,7 +53,8 @@ def generate_car_name(index):
 def export_custom_batam_excel(detailed_df):
     """
     Generates a customized Excel workbook containing ONLY the 'Detailed Allocations' sheet
-    with repeating headers on print, row height = 20 for rows 2-4, and white fill for A1:F5.
+    with repeating headers on print, row height = 20 for rows 2-4, white fill for A1:F5,
+    and fixed widths for Column B (12) and Column C (18).
     """
     wb = openpyxl.Workbook()
     
@@ -80,12 +81,12 @@ def export_custom_batam_excel(detailed_df):
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
     ws2.print_title_rows = '1:6'
     
-    # 1. Fill white color for cells A1:F5
+    # Fill white color for cells A1:F5
     for r in range(1, 6):
         for c in range(1, 7):
             ws2.cell(row=r, column=c).fill = white_fill
 
-    # 2. Adjust row height to 20 for rows 2, 3, and 4
+    # Adjust row height to 20 for rows 2, 3, and 4
     ws2.row_dimensions[2].height = 20
     ws2.row_dimensions[3].height = 20
     ws2.row_dimensions[4].height = 20
@@ -176,15 +177,21 @@ def export_custom_batam_excel(detailed_df):
                 ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=data_start + tot_rows - 1, end_column=merge_col)
                 ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+    # Apply column width logic
     for col in ws2.columns:
-        max_len = 0
-        for cell in col:
-            lines = str(cell.value or '').split('\n')
-            for line in lines:
-                if len(line) > max_len:
-                    max_len = len(line)
         col_letter = col[0].column_letter
-        ws2.column_dimensions[col_letter].width = max(max_len + 4, 18)
+        if col_letter == 'B':
+            ws2.column_dimensions['B'].width = 12
+        elif col_letter == 'C':
+            ws2.column_dimensions['C'].width = 18
+        else:
+            max_len = 0
+            for cell in col:
+                lines = str(cell.value or '').split('\n')
+                for line in lines:
+                    if len(line) > max_len:
+                        max_len = len(line)
+            ws2.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -715,7 +722,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
@@ -767,7 +774,7 @@ with tab2:
             recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
-                st.error("⚠️ Max 6 months recurrence limit exceeded.")
+                st.error("⚠️️ Max 6 months recurrence limit exceeded.")
                 st.stop()
 
         if st.button("Confirm Room Block Assignment"):
