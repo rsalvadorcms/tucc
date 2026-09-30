@@ -13,7 +13,7 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 
 # Optional import for PDF rendering
 try:
-    from reportlab.lib.pagesizes import A3, landscape
+    from reportlab.lib.pagesizes import A3, portrait
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
@@ -41,25 +41,24 @@ def generate_whatsapp_link(phone_number, text):
     else:
         return f"https://api.whatsapp.com/send?text={encoded_text}"
 
-def generate_car_name(index):
-    """Generates sequential car names: Car A, Car B ... Car Z, Car AA, etc."""
-    if index < 26:
-        return f"Car {string.ascii_uppercase[index]}"
-    else:
-        first = string.ascii_uppercase[(index // 26) - 1]
-        second = string.ascii_uppercase[index % 26]
-        return f"Car {first}{second}"
+def export_df_to_excel(df, sheet_name="Data"):
+    """Generic helper function to export any pandas DataFrame to XLSX format."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buffer.getvalue()
 
-def export_custom_batam_excel(detailed_df):
+def export_custom_batam_excel(detailed_df, effective_date_str=""):
     """
     Generates a customized Excel workbook containing ONLY the 'Detailed Allocations' sheet
     with repeating headers on print, row height = 20 for rows 2-4, white fill for A1:F5,
-    and fixed widths for Column B (12) and Column C (18).
+    fixed widths for Column B (12) and Column C (18), and Effective Date in E5:F5.
     """
     wb = openpyxl.Workbook()
     
     font_title = Font(name="Calibri", size=13, bold=True, color="1F4E78")
     font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    font_bold_label = Font(name="Calibri", size=10, bold=True, color="000000")
     font_data = Font(name="Calibri", size=10)
     
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -77,8 +76,9 @@ def export_custom_batam_excel(detailed_df):
     ws2.title = "Detailed Allocations"
     ws2.views.sheetView[0].showGridLines = True
     
-    # Configure Paper Size to A3 and repeat rows 1 to 6 on every printed page
+    # Configure Paper Size to A3 Portrait and repeat rows 1 to 6 on every printed page
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
+    ws2.page_setup.orientation = ws2.ORIENTATION_PORTRAIT
     ws2.print_title_rows = '1:6'
     
     # Fill white color for cells A1:F5
@@ -90,6 +90,15 @@ def export_custom_batam_excel(detailed_df):
     ws2.row_dimensions[2].height = 20
     ws2.row_dimensions[3].height = 20
     ws2.row_dimensions[4].height = 20
+
+    # Write Effective Date in E5 and F5
+    cell_e5 = ws2.cell(row=5, column=5, value="Effective Date:")
+    cell_e5.font = font_bold_label
+    cell_e5.alignment = Alignment(horizontal="right", vertical="center")
+    
+    cell_f5 = ws2.cell(row=5, column=6, value=effective_date_str)
+    cell_f5.font = font_bold_label
+    cell_f5.alignment = Alignment(horizontal="center", vertical="center")
 
     start_row = 6
     
@@ -197,9 +206,9 @@ def export_custom_batam_excel(detailed_df):
     wb.save(buffer)
     return buffer.getvalue()
 
-def export_custom_batam_pdf(detailed_df):
+def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     """
-    Generates a PDF matching the Excel grid layout, repeating the header block across pages.
+    Generates a PDF on A3 Portrait matching the Excel layout with Effective Date in E5/F5 block.
     """
     if not HAS_REPORTLAB:
         return None
@@ -207,7 +216,7 @@ def export_custom_batam_pdf(detailed_df):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(A3),
+        pagesize=portrait(A3),
         rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25
     )
     
@@ -219,6 +228,10 @@ def export_custom_batam_pdf(detailed_df):
     subtitle_style = ParagraphStyle(
         'DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold',
         fontSize=11, leading=14, alignment=1, textColor=colors.HexColor('#333333')
+    )
+    eff_date_style = ParagraphStyle(
+        'EffDateStyle', parent=styles['Normal'], fontName='Helvetica-Bold',
+        fontSize=10, leading=12, alignment=2, textColor=colors.HexColor('#000000') # Right aligned
     )
     cell_style = ParagraphStyle(
         'CellText', parent=styles['Normal'], fontName='Helvetica',
@@ -242,7 +255,7 @@ def export_custom_batam_pdf(detailed_df):
     img2_elem = RLImage(LOGO2_PATH, width=120, height=45) if os.path.exists(LOGO2_PATH) else ""
     
     top_table_data = [[img1_elem, header_box, img2_elem]]
-    top_table = Table(top_table_data, colWidths=[130, 880, 130])
+    top_table = Table(top_table_data, colWidths=[110, 560, 110])
     top_table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (0, 0), 'LEFT'),
@@ -251,7 +264,17 @@ def export_custom_batam_pdf(detailed_df):
     ]))
     
     story.append(top_table)
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 10))
+    
+    # Row 5 equivalent: Effective Date Block (Cell E5 & F5)
+    eff_p = Paragraph(f"<b>Effective Date:</b> {effective_date_str}", eff_date_style)
+    eff_table = Table([[Paragraph("", cell_style), eff_p]], colWidths=[550, 230])
+    eff_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.append(eff_table)
+    story.append(Spacer(1, 8))
     
     # Main Data Table
     headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
@@ -292,7 +315,7 @@ def export_custom_batam_pdf(detailed_df):
         for col_i in [0, 1, 2, 4, 5]:
             table_spans.append(('SPAN', (col_i, grp_start), (col_i, tot_rows)))
             
-    main_table = Table(table_data, colWidths=[200, 180, 180, 260, 160, 160], repeatRows=1)
+    main_table = Table(table_data, colWidths=[150, 120, 120, 210, 90, 90], repeatRows=1)
     
     ts = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
@@ -473,7 +496,6 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = ""
     st.session_state.emp_name = ""
 
-# Guard against missing keys on existing active sessions
 if 'emp_name' not in st.session_state:
     st.session_state.emp_name = st.session_state.get('username', '')
 
@@ -536,7 +558,6 @@ with tab1:
 
     col1, col2 = st.columns(2)
     with col1:
-        # Multi-staff selection dropdown defaulting to logged-in user's employee name
         selected_staff_members = st.multiselect(
             "Select Staff Member(s) for Overtime", 
             options=all_emp_names, 
@@ -564,7 +585,6 @@ with tab1:
             default_dep_time_str = "19:00"
             st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
-        # Military time inputs
         start_time = st.time_input("OT Start Time (24-hr Military Time)", value=default_start)
         end_time = st.time_input("OT End Time (24-hr Military Time)", value=default_end)
         needs_transport = st.selectbox("Require Individual Transportation Logistics?", ["Yes", "No"], index=0)
@@ -579,7 +599,6 @@ with tab1:
             origin, destination, dep_time_str, ret_time_str = ["", "", "", ""]
 
     if st.button("Submit New Overtime Request"):
-        # Validation checks: Target Date, OT Start Time, OT End Time cannot be blank
         if not ot_date or not date_str:
             st.error("❌ Submission Failed: Target Date cannot be blank.")
         elif start_time is None:
@@ -616,6 +635,15 @@ with tab1:
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
+        
+        # Changed export to Excel (.xlsx)
+        ot_excel_bytes = export_df_to_excel(ot_df, sheet_name="Overtime_Requests")
+        st.download_button(
+            label="📥 Export Overtime Log to Excel (.xlsx)",
+            data=ot_excel_bytes,
+            file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
 with tab1_b:
@@ -674,9 +702,16 @@ with tab1_b:
             st.info("Ensure Transit Groups are created and Users have 'emp_name' populated.")
 
     st.markdown("---")
-    st.subheader("📋 Configured Groups & Assigned Passengers")
-    conn = get_db_connection()
     
+    # Effective Date Selection beside the section title
+    title_col, eff_date_col = st.columns([2, 1])
+    with title_col:
+        st.subheader("📋 Configured Groups & Assigned Passengers")
+    with eff_date_col:
+        target_effective_date = st.date_input("Target Effective Date", value=date.today(), key="eff_date_picker")
+        eff_date_str = target_effective_date.strftime("%Y-%m-%d") if target_effective_date else ""
+
+    conn = get_db_connection()
     unrolled_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
@@ -692,8 +727,8 @@ with tab1_b:
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
         
-        excel_bytes = export_custom_batam_excel(unrolled_df)
-        pdf_bytes = export_custom_batam_pdf(unrolled_df) if HAS_REPORTLAB else None
+        excel_bytes = export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str)
+        pdf_bytes = export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str) if HAS_REPORTLAB else None
 
         col_ex, col_pdf = st.columns(2)
         
@@ -728,21 +763,30 @@ with tab1_c:
     
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Schedule Group for Date")
+        st.subheader("Schedule Groups for Date")
         dispatch_date = st.date_input("Select Transit Date", value=date.today())
         disp_date_str = dispatch_date.strftime("%Y-%m-%d")
         
         if available_groups:
-            selected_dispatch_group = st.selectbox("Select Group Name to Dispatch", available_groups, key="disp_group_sel")
+            # Multiselect for scheduling multiple groups at once
+            selected_dispatch_groups = st.multiselect(
+                "Select Group Name(s) to Dispatch", 
+                options=available_groups, 
+                key="disp_groups_sel"
+            )
             
             if st.button("Schedule Daily Transit"):
-                conn = get_db_connection()
-                conn.execute("INSERT INTO daily_transit (transit_date, group_name) VALUES (?, ?)",
-                             (disp_date_str, selected_dispatch_group))
-                conn.commit()
-                conn.close()
-                st.success(f"Group '{selected_dispatch_group}' scheduled for {disp_date_str}!")
-                st.rerun()
+                if selected_dispatch_groups:
+                    conn = get_db_connection()
+                    for grp in selected_dispatch_groups:
+                        conn.execute("INSERT INTO daily_transit (transit_date, group_name) VALUES (?, ?)",
+                                     (disp_date_str, grp))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Successfully scheduled {len(selected_dispatch_groups)} group(s) for {disp_date_str}!")
+                    st.rerun()
+                else:
+                    st.error("Please select at least one group name.")
         else:
             st.warning("No Transit Groups created yet.")
             
@@ -767,7 +811,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f" *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
@@ -789,6 +833,15 @@ with tab1_c:
     st.subheader(f"📊 Scheduled Dispatches for {disp_date_str}")
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True)
+        
+        # Changed export to Excel (.xlsx)
+        dispatch_excel_bytes = export_df_to_excel(daily_df, sheet_name="Daily_Dispatches")
+        st.download_button(
+            label="📥 Export Daily Schedule to Excel (.xlsx)",
+            data=dispatch_excel_bytes,
+            file_name=f"Daily_Dispatch_Schedule_{disp_date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     else:
         st.info("No transit groups scheduled for this date.")
 
@@ -819,7 +872,7 @@ with tab2:
             recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
-                st.error("⚠️ Max 6 months recurrence limit exceeded.")
+                st.error("⚠️️ Max 6 months recurrence limit exceeded.")
                 st.stop()
 
         if st.button("Confirm Room Block Assignment"):
@@ -879,6 +932,15 @@ with tab2:
     
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
+        
+        # Changed export to Excel (.xlsx)
+        rooms_excel_bytes = export_df_to_excel(bookings_df, sheet_name="Room_Bookings")
+        st.download_button(
+            label="📥 Export Room Bookings to Excel (.xlsx)",
+            data=rooms_excel_bytes,
+            file_name=f"Room_Bookings_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
