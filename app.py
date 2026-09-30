@@ -37,7 +37,7 @@ def generate_car_name(index):
         second = string.ascii_uppercase[index % 26]
         return f"Car {first}{second}"
 
-def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.png"):
+def export_custom_batam_excel(groups_summary_df, detailed_df, logo1_path="logo.png", logo2_path="logo2.png"):
     """
     Generates a customized Excel workbook matching the 
     'Template - Daily Transportation Arrangement TUCC Batam.xlsx' design layout.
@@ -51,15 +51,12 @@ def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.pn
     ws1.title = "DAILY TRANSPORTATION"
     ws1.views.sheetView[0].showGridLines = True
     
-    # Styling definitions matching Batam TUCC template
     font_title = Font(name="Calibri", size=14, bold=True, color="1F4E78")
     font_subtitle = Font(name="Calibri", size=11, bold=True, color="595959")
     font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     font_data = Font(name="Calibri", size=10)
-    font_bold_data = Font(name="Calibri", size=10, bold=True)
     
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    sub_header_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
     zebra_fill = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")
     
     thin_border = Border(
@@ -69,7 +66,6 @@ def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.pn
         bottom=Side(style='thin', color='BFBFBF')
     )
     
-    # Header titles block
     ws1["C2"] = "DAILY TRANSPORTATION ARRANGEMENT"
     ws1["C2"].font = font_title
     ws1["C3"] = "TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
@@ -77,16 +73,15 @@ def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.pn
     ws1["C4"] = "JOB CODE : 0 - 0847 - 00 - 0001"
     ws1["C4"].font = font_subtitle
     
-    if os.path.exists(logo_path):
+    if os.path.exists(logo1_path):
         try:
-            img = OpenpyxlImage(logo_path)
-            img.width = 110
-            img.height = 45
-            ws1.add_image(img, "A1")
+            img1 = OpenpyxlImage(logo1_path)
+            img1.width = 110
+            img1.height = 45
+            ws1.add_image(img1, "A1")
         except Exception:
             pass
 
-    # Table Header Row
     headers = [
         "Car Group", "Vehicle Model", "Plate Number", "Driver Name", 
         "Contact Number", "Passenger(s)", "ETD 1 (From)", "ETD 2 (To)"
@@ -113,26 +108,49 @@ def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.pn
             else:
                 cell.alignment = Alignment(vertical="center")
 
-    # Auto column width adjustment
     for col in ws1.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = col[0].column_letter
         ws1.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     # --------------------------------------------------------------------------
-    # SHEET 2: Unrolled Passengers with Group Merging
+    # SHEET 2: DETAILED ALLOCATIONS (Reordered, Combined & Center Aligned)
     # --------------------------------------------------------------------------
-    ws2 = wb.create_sheet(title="DETAILED ALLOCATIONS")
+    ws2 = wb.create_sheet(title="Detailed Allocations")
     ws2.views.sheetView[0].showGridLines = True
     
-    ws2["C2"] = "DAILY TRANSPORTATION ARRANGEMENT - PASSENGER LIST"
+    # Configure Paper Size to A3
+    ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
+    
+    ws2["C2"] = "Daily Transportation Arrangement - Passenger list"
     ws2["C2"].font = font_title
     ws2["C3"] = "TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
     ws2["C3"].font = font_subtitle
     
+    # Top-Left Logo
+    if os.path.exists(logo1_path):
+        try:
+            img1 = OpenpyxlImage(logo1_path)
+            img1.width = 100
+            img1.height = 45
+            ws2.add_image(img1, "A1")
+        except Exception:
+            pass
+
+    # Top-Right Logo (Vertically aligned with headers at Col F)
+    if os.path.exists(logo2_path):
+        try:
+            img2 = OpenpyxlImage(logo2_path)
+            img2.width = 130
+            img2.height = 45
+            ws2.add_image(img2, "F1")
+        except Exception:
+            pass
+
+    # Required column arrangement: Vehicle Description, Driver Name, Contact Number, Passenger, ETD 1, ETD 2
     det_headers = [
-        "Car Group", "Vehicle Model", "Plate Number", "Driver Name", 
-        "Contact Number", "ETD 1 (From)", "ETD 2 (To)", "Passenger Name"
+        "Vehicle Description", "Driver Name", "Contact Number", 
+        "Passenger", "ETD 1", "ETD 2"
     ]
     
     for col_idx, h_title in enumerate(det_headers, start=1):
@@ -143,37 +161,64 @@ def export_custom_batam_excel(groups_summary_df, detailed_df, logo_path="logo.pn
         cell.border = thin_border
         
     data_start = start_row + 1
-    for r_idx, row_vals in enumerate(detailed_df.values, start=data_start):
-        for c_idx, val in enumerate(row_vals, start=1):
+    
+    # Process & write rows
+    for r_idx, row in enumerate(detailed_df.iterrows(), start=data_start):
+        row_data = row[1]
+        
+        # Combine Car Group, Vehicle Model, and Plate Number into Vehicle Description
+        v_model = str(row_data.get("Vehicle Model", "") or "").strip()
+        p_num = str(row_data.get("Plate Number", "") or "").strip()
+        c_grp = str(row_data.get("Car Group", "") or "").strip()
+        
+        v_desc_parts = [p for p in [v_model, p_num] if p]
+        v_desc = " - ".join(v_desc_parts)
+        if c_grp:
+            v_desc += f" ({c_grp})" if v_desc else c_grp
+            
+        d_name = row_data.get("Driver Name", "")
+        c_num = row_data.get("Contact Number", "")
+        p_name = row_data.get("Passenger Name", "")
+        etd1 = row_data.get("ETD 1 (From)", "")
+        etd2 = row_data.get("ETD 2 (To)", "")
+        
+        ordered_vals = [v_desc, d_name, c_num, p_name, etd1, etd2]
+        
+        is_even = (r_idx % 2 == 0)
+        for c_idx, val in enumerate(ordered_vals, start=1):
             cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
             cell.font = font_data
             cell.border = thin_border
-            cell.alignment = Alignment(vertical="center")
+            # Center align ALL cells in Sheet 2 as requested
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if is_even:
+                cell.fill = zebra_fill
 
-    # Merge repeated car/driver details for same car group
+    # Merge repeated vehicle & driver details vertically per group
     if not detailed_df.empty:
         current_grp = None
         grp_start = data_start
         tot_rows = len(detailed_df)
         
-        for idx, grp_val in enumerate(detailed_df['Group Name'].values, start=data_start):
+        for idx, grp_val in enumerate(detailed_df['Car Group'].values, start=data_start):
             if grp_val != current_grp:
                 if current_grp is not None and (idx - 1) > grp_start:
-                    for merge_col in [1, 2, 3, 4, 5, 6, 7]:
+                    # Merge Vehicle Description (col 1), Driver Name (col 2), Contact Number (col 3), ETD 1 (col 5), ETD 2 (col 6)
+                    for merge_col in [1, 2, 3, 5, 6]:
                         ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=idx - 1, end_column=merge_col)
                         ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center")
                 current_grp = grp_val
                 grp_start = idx
                 
         if current_grp is not None and (data_start + tot_rows - 1) > grp_start:
-            for merge_col in [1, 2, 3, 4, 5, 6, 7]:
+            for merge_col in [1, 2, 3, 5, 6]:
                 ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=data_start + tot_rows - 1, end_column=merge_col)
                 ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center")
 
     for col in ws2.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = col[0].column_letter
-        ws2.column_dimensions[col_letter].width = max(max_len + 4, 12)
+        ws2.column_dimensions[col_letter].width = max(max_len + 4, 15)
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -531,7 +576,7 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     
-    # Sheet 1 Data: Grouped Passengers (Comma-separated)
+    # Sheet 1 Data: Grouped Passengers
     groups_summary_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
@@ -544,9 +589,9 @@ with tab1_b:
         GROUP BY tg.id
     ''', conn)
 
-    # Sheet 2 Data: Unrolled Passengers (Individual rows per passenger)
+    # Sheet 2 Data: Unrolled Passengers for Detailed Allocations
     unrolled_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
                tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
         FROM transit_groups tg
@@ -813,7 +858,6 @@ with tab3:
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
         
-        # Keep track of original passwords for 'users' table
         original_passwords = {}
         if selected_table == "users":
             original_passwords = dict(zip(table_df["username"], table_df["password"]))
