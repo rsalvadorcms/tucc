@@ -777,7 +777,9 @@ with tab1_c:
     conn = get_db_connection()
     users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
     all_emp_names = users_df['emp_name'].tolist()
-    available_groups = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+    
+    # Query cars table to extract car_name, plate_number, and vehicle details for dropdown display
+    cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
     conn.close()
     
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
@@ -786,6 +788,22 @@ with tab1_c:
     
     default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
     is_admin = st.session_state.get("role", "") == "Admin"
+
+    # Build Car Options Dictionary with Plate Numbers
+    car_option_labels = ["TBA - To Be Assigned"]
+    car_label_to_group = {"TBA - To Be Assigned": "TBA"}
+    car_group_to_label = {"TBA": "TBA - To Be Assigned"}
+    
+    if not cars_db_df.empty:
+        for _, c_row in cars_db_df.iterrows():
+            c_name = str(c_row['car_name']).strip()
+            p_num = str(c_row['plate_number'] or 'N/A').strip()
+            v_model = str(c_row['vehicle'] or '').strip()
+            
+            label_str = f"{c_name} - {p_num}" + (f" ({v_model})" if v_model else "")
+            car_option_labels.append(label_str)
+            car_label_to_group[label_str] = c_name
+            car_group_to_label[c_name] = label_str
 
     col1, col2 = st.columns(2)
     with col1:
@@ -817,7 +835,7 @@ with tab1_c:
         else:
             dispatch_date_end = dispatch_date_start
             disp_date_end_str = disp_date_start_str
-            st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
+            st.caption("ℹ️️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
         location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
         location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
@@ -828,11 +846,12 @@ with tab1_c:
         etd_1 = st.text_input("ETD 1 (Start Time)", value="08:00")
         etd_2 = st.text_input("ETD 2 (Return Time)", value="17:00")
         
-        group_options = ["TBA"] + available_groups
         if is_admin:
-            selected_group = st.selectbox("Assigned Group / Car Name", options=group_options, index=0)
+            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0)
+            selected_group = car_label_to_group.get(selected_car_label, "TBA")
         else:
-            selected_group = st.selectbox("Assigned Group / Car Name", options=["TBA"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
+            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=["TBA - To Be Assigned"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
+            selected_group = "TBA"
 
     if st.button("Submit Transit Dispatch Request"):
         if not disp_date_start_str or not disp_date_end_str:
@@ -856,16 +875,33 @@ with tab1_c:
     st.subheader("📊 Scheduled Transit Dispatches Log")
     
     conn = get_db_connection()
-    daily_raw_df = pd.read_sql_query("SELECT * FROM daily_transit ORDER BY transit_date_start DESC, id DESC", conn)
+    daily_raw_df = pd.read_sql_query('''
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, dt.requested_by, 
+               dt.group_name, c.plate_number, c.vehicle,
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
+        FROM daily_transit dt
+        LEFT JOIN cars c ON dt.group_name = c.car_name
+        ORDER BY dt.transit_date_start DESC, dt.id DESC
+    ''', conn)
     conn.close()
     
     if not daily_raw_df.empty:
-        export_df = daily_raw_df.rename(columns={
+        display_df = daily_raw_df.copy()
+        
+        # Combine group_name and plate_number for log display readability
+        display_df['Group / Car'] = display_df.apply(
+            lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'],
+            axis=1
+        )
+        
+        export_df = display_df[[
+            "id", "transit_date_start", "transit_date_end", "requested_by", 
+            "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"
+        ]].rename(columns={
             "id": "Dispatch ID",
             "transit_date_start": "Transit Date Start",
             "transit_date_end": "Transit Date End",
             "requested_by": "Requested By",
-            "group_name": "Group / Car",
             "location_from": "Origin (From)",
             "location_to": "Destination (To)",
             "etd_1": "ETD Start",
@@ -892,13 +928,12 @@ with tab1_c:
                 sf_col1, sf_col2, sf_col3 = st.columns([2, 2, 2])
                 
                 with sf_col1:
-                    search_query = st.text_input("Search (Requester, Origin, Dest, Group)", value="", key="search_dispatch_txt")
+                    search_query = st.text_input("Search (Requester, Origin, Dest, Car, Plate)", value="", key="search_dispatch_txt")
                 
                 with sf_col2:
-                    filter_group = st.selectbox("Filter by Group / Car", options=["All"] + ["TBA"] + available_groups, index=0, key="filter_grp_sel")
+                    filter_car_label = st.selectbox("Filter by Group / Car", options=["All"] + car_option_labels, index=0, key="filter_grp_sel")
                     
                 with sf_col3:
-                    # Proper Date Picker Range Filter
                     filter_date_range = st.date_input(
                         "Filter by Date Range", 
                         value=(date.today() - timedelta(days=7), date.today() + timedelta(days=30)),
@@ -913,11 +948,13 @@ with tab1_c:
                     filtered_df['requested_by'].astype(str).str.lower().str.contains(sq) |
                     filtered_df['location_from'].astype(str).str.lower().str.contains(sq) |
                     filtered_df['location_to'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['group_name'].astype(str).str.lower().str.contains(sq)
+                    filtered_df['group_name'].astype(str).str.lower().str.contains(sq) |
+                    filtered_df['plate_number'].astype(str).str.lower().str.contains(sq)
                 ]
                 
-            if filter_group != "All":
-                filtered_df = filtered_df[filtered_df['group_name'] == filter_group]
+            if filter_car_label != "All":
+                target_grp_code = car_label_to_group.get(filter_car_label, "TBA")
+                filtered_df = filtered_df[filtered_df['group_name'] == target_grp_code]
                 
             if isinstance(filter_date_range, tuple) and len(filter_date_range) == 2:
                 start_f, end_f = filter_date_range
@@ -926,14 +963,13 @@ with tab1_c:
 
             st.caption(f"Showing **{len(filtered_df)}** of **{len(daily_raw_df)}** recorded dispatches.")
             
-            group_options_all = ["TBA"] + available_groups
-            
             if not filtered_df.empty:
                 for idx, row in filtered_df.iterrows():
                     rec_id = row['id']
-                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
+                    grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
+                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
                     
-                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
@@ -950,7 +986,6 @@ with tab1_c:
                             edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
                             edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(row['daily'] if row['daily'] in ["Yes", "No"] else "No"), key=f"e_daily_{rec_id}")
                             
-                            # Proper Date Pickers for Editing Existing Record
                             edit_dt_start = st.date_input("Transit Date Start", value=curr_start_obj, key=f"e_dt_start_{rec_id}")
                             
                             if edit_daily == "Yes":
@@ -966,8 +1001,11 @@ with tab1_c:
                             edit_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
                             edit_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
                             
-                            curr_grp = row['group_name'] if row['group_name'] in group_options_all else "TBA"
-                            edit_grp = st.selectbox("Group / Car Name", options=group_options_all, index=group_options_all.index(curr_grp), key=f"e_grp_{rec_id}")
+                            curr_grp_code = row['group_name'] if row['group_name'] in car_group_to_label else "TBA"
+                            curr_car_label = car_group_to_label.get(curr_grp_code, "TBA - To Be Assigned")
+                            
+                            edit_car_label = st.selectbox("Group / Car Name (With Plate Number)", options=car_option_labels, index=car_option_labels.index(curr_car_label) if curr_car_label in car_option_labels else 0, key=f"e_grp_{rec_id}")
+                            edit_grp = car_label_to_group.get(edit_car_label, "TBA")
 
                         btn_col1, btn_col2 = st.columns([1, 4])
                         
