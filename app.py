@@ -28,7 +28,7 @@ LOGO1_PATH = "logo.png"
 LOGO2_PATH = "logo2.png"
 
 # ==============================================================================
-# ⚙️️ 1. HELPER FUNCTIONS & DATABASE ENGINE
+# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
@@ -341,6 +341,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
+            emp_name TEXT,
             ot_date TEXT,
             start_time TEXT,
             end_time TEXT,
@@ -453,6 +454,11 @@ def run_migrations():
     if "color" not in car_cols:
         cursor.execute("ALTER TABLE cars ADD COLUMN color TEXT DEFAULT 'Black'")
 
+    cursor.execute("PRAGMA table_info(overtime_requests)")
+    ot_cols = [col[1] for col in cursor.fetchall()]
+    if "emp_name" not in ot_cols:
+        cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
+
     conn.commit()
     conn.close()
 
@@ -465,6 +471,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.role = ""
+    st.session_state.emp_name = ""
 
 if not st.session_state.logged_in:
     st.title("🏢 Office Operations Portal")
@@ -483,13 +490,14 @@ if not st.session_state.logged_in:
                 st.session_state.logged_in = True
                 st.session_state.username = user['username']
                 st.session_state.role = user['role']
+                st.session_state.emp_name = user['emp_name'] or user['username']
                 st.rerun()
             else:
                 st.error("Invalid username or password configuration.")
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS
+# 🗂️️ 3. MAIN APP CONTROL PANELS
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
@@ -497,6 +505,7 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.logged_in = False
     st.session_state.username = ""
     st.session_state.role = ""
+    st.session_state.emp_name = ""
     st.rerun()
 
 tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "🛠️ System Administration"]
@@ -509,64 +518,95 @@ with tab1:
     conn = get_db_connection()
     holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
     holiday_list = holidays_df['holiday_date'].tolist()
+    
+    users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
+    all_emp_names = users_df['emp_name'].tolist()
     conn.close()
     
+    if not all_emp_names:
+        all_emp_names = [st.session_state.emp_name or st.session_state.username]
+        
+    logged_in_emp = st.session_state.emp_name if st.session_state.emp_name in all_emp_names else all_emp_names[0]
+    default_emp_index = all_emp_names.index(logged_in_emp) if logged_in_emp in all_emp_names else 0
+
     col1, col2 = st.columns(2)
     with col1:
+        # Multi-staff selection dropdown defaulting to logged-in user's employee name
+        selected_staff_members = st.multiselect(
+            "Select Staff Member(s) for Overtime", 
+            options=all_emp_names, 
+            default=[logged_in_emp]
+        )
+        
         ot_date = st.date_input("Select Target Date", value=date.today())
-        date_str = ot_date.strftime("%Y-%m-%d")
-        is_sunday = ot_date.weekday() == 6
-        is_holiday = date_str in holiday_list
+        date_str = ot_date.strftime("%Y-%m-%d") if ot_date else ""
+        
+        is_sunday = ot_date.weekday() == 6 if ot_date else False
+        is_holiday = date_str in holiday_list if date_str else False
         
         if is_sunday or is_holiday:
             default_start = time(7, 0)
             default_end = time(15, 0)
+            default_origin = "Panbil"
+            default_dest = "Yard-1 Office"
+            default_dep_time_str = "07:00"
             st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
             default_start = time(17, 30)
             default_end = time(19, 0)
-            st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
+            default_origin = "Yard-1 Office"
+            default_dest = "Panbil"
+            default_dep_time_str = "19:00"
+            st.caption("ℹ️️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
-        start_time = st.time_input("OT Start Time", value=default_start)
-        end_time = st.time_input("OT End Time", value=default_end)
+        # Military time inputs
+        start_time = st.time_input("OT Start Time (24-hr Military Time)", value=default_start)
+        end_time = st.time_input("OT End Time (24-hr Military Time)", value=default_end)
         needs_transport = st.selectbox("Require Individual Transportation Logistics?", ["Yes", "No"], index=0)
         
     with col2:
         if needs_transport == "Yes":
-            if is_sunday or is_holiday:
-                default_dep_time = start_time
-                default_ret_time = end_time
-                st.caption("ℹ️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
-            else:
-                default_dep_time = end_time
-                default_ret_time = time(23, 0)
-            
-            origin = st.text_input("Origin Address", value="Main Corporate Office")
-            destination = st.text_input("Target Destination")
-            dep_time = st.time_input("Departure Timeline Estimate", value=default_dep_time)
-            ret_time = st.time_input("Return Timeline Estimate", value=default_ret_time)
+            origin = st.text_input("Origin Address", value=default_origin)
+            destination = st.text_input("Target Destination", value=default_dest)
+            dep_time_str = st.text_input("Departure Timeline Estimate (24-hr)", value=default_dep_time_str)
+            ret_time_str = st.text_input("Return Timeline Estimate (24-hr)", value="")
         else:
-            origin, destination, dep_time, ret_time = ["", "", "", ""]
+            origin, destination, dep_time_str, ret_time_str = ["", "", "", ""]
 
     if st.button("Submit New Overtime Request"):
-        conn = get_db_connection()
-        conn.execute('''
-            INSERT INTO overtime_requests (username, ot_date, start_time, end_time, needs_transport, 
-            origin, destination, departure_time, return_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (st.session_state.username, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"),
-              needs_transport, origin, destination, str(dep_time), str(ret_time)))
-        
-        conn.commit()
-        conn.close()
-        st.success("🎉 Overtime log successfully submitted!")
+        # Validation checks: Target Date, OT Start Time, OT End Time cannot be blank
+        if not ot_date or not date_str:
+            st.error("❌ Submission Failed: Target Date cannot be blank.")
+        elif start_time is None:
+            st.error("❌ Submission Failed: OT Start Time cannot be blank.")
+        elif end_time is None:
+            st.error("❌ Submission Failed: OT End Time cannot be blank.")
+        elif not selected_staff_members:
+            st.error("❌ Submission Failed: Please select at least one staff member.")
+        else:
+            start_time_military = start_time.strftime("%H:%M")
+            end_time_military = end_time.strftime("%H:%M")
+            
+            conn = get_db_connection()
+            for staff in selected_staff_members:
+                conn.execute('''
+                    INSERT INTO overtime_requests (username, emp_name, ot_date, start_time, end_time, needs_transport, 
+                    origin, destination, departure_time, return_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (st.session_state.username, staff, date_str, start_time_military, end_time_military,
+                      needs_transport, origin, destination, dep_time_str, ret_time_str))
+            
+            conn.commit()
+            conn.close()
+            st.success(f"🎉 Overtime log successfully submitted for {len(selected_staff_members)} staff member(s)!")
+            st.rerun()
 
     st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
     if st.session_state.role == "Admin":
-        ot_df = pd.read_sql_query("SELECT * FROM overtime_requests", conn)
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests", conn)
     else:
-        ot_df = pd.read_sql_query("SELECT * FROM overtime_requests WHERE username = ?", conn, params=[st.session_state.username])
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests WHERE username = ?", conn, params=[st.session_state.username])
     conn.close()
     
     if not ot_df.empty:
@@ -774,7 +814,7 @@ with tab2:
             recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
             
             if recurrence_end > max_rec_end:
-                st.error("⚠️️ Max 6 months recurrence limit exceeded.")
+                st.error("⚠️ Max 6 months recurrence limit exceeded.")
                 st.stop()
 
         if st.button("Confirm Room Block Assignment"):
