@@ -476,7 +476,7 @@ def run_migrations():
     if "emp_name" not in ot_cols:
         cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
 
-    # Migrations for daily_transit table: rename transit_date -> transit_date_start and add transit_date_end
+    # Migrations for daily_transit table
     cursor.execute("PRAGMA table_info(daily_transit)")
     dt_cols = [col[1] for col in cursor.fetchall()]
 
@@ -583,7 +583,7 @@ with tab1:
             default=[logged_in_emp]
         )
         
-        ot_date = st.date_input("Select Target Date", value=date.today())
+        ot_date = st.date_input("Select Target Date", value=date.today(), key="ot_date_picker")
         date_str = ot_date.strftime("%Y-%m-%d") if ot_date else ""
         
         is_sunday = ot_date.weekday() == 6 if ot_date else False
@@ -793,26 +793,24 @@ with tab1_c:
         
         requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by))
         
-        # Daily / Recurring Journey Control
         if is_admin:
             is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
         else:
             is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
 
-        # Transit Date Start Control (Current or Future Date, Max 30 Days)
         min_date = date.today()
         max_date = min_date + timedelta(days=30)
         
-        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date)
+        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date, key="reg_dt_start")
         disp_date_start_str = dispatch_date_start.strftime("%Y-%m-%d") if dispatch_date_start else ""
         
-        # Transit Date End Control Logic
         if is_daily == "Yes":
             dispatch_date_end = st.date_input(
                 "Select Transit End Date", 
                 value=dispatch_date_start + timedelta(days=1), 
                 min_value=dispatch_date_start + timedelta(days=1),
-                max_value=max_date + timedelta(days=180)
+                max_value=max_date + timedelta(days=180),
+                key="reg_dt_end"
             )
             disp_date_end_str = dispatch_date_end.strftime("%Y-%m-%d") if dispatch_date_end else ""
             st.caption("ℹ️ **Recurring Daily Journey**: Start Date must be earlier than End Date.")
@@ -900,7 +898,12 @@ with tab1_c:
                     filter_group = st.selectbox("Filter by Group / Car", options=["All"] + ["TBA"] + available_groups, index=0, key="filter_grp_sel")
                     
                 with sf_col3:
-                    filter_date_range = st.date_input("Filter by Date Range", value=[], key="filter_dt_range")
+                    # Proper Date Picker Range Filter
+                    filter_date_range = st.date_input(
+                        "Filter by Date Range", 
+                        value=(date.today() - timedelta(days=7), date.today() + timedelta(days=30)),
+                        key="filter_dt_range"
+                    )
 
             filtered_df = daily_raw_df.copy()
             
@@ -916,10 +919,10 @@ with tab1_c:
             if filter_group != "All":
                 filtered_df = filtered_df[filtered_df['group_name'] == filter_group]
                 
-            if len(filter_date_range) == 2:
+            if isinstance(filter_date_range, tuple) and len(filter_date_range) == 2:
                 start_f, end_f = filter_date_range
-                filtered_df['dt_obj'] = pd.to_datetime(filtered_df['transit_date_start']).dt.date
-                filtered_df = filtered_df[(filtered_df['dt_obj'] >= start_f) & (filtered_df['dt_obj'] <= end_f)]
+                filtered_df['dt_start_obj'] = pd.to_datetime(filtered_df['transit_date_start']).dt.date
+                filtered_df = filtered_df[(filtered_df['dt_start_obj'] >= start_f) & (filtered_df['dt_start_obj'] <= end_f)]
 
             st.caption(f"Showing **{len(filtered_df)}** of **{len(daily_raw_df)}** recorded dispatches.")
             
@@ -930,7 +933,7 @@ with tab1_c:
                     rec_id = row['id']
                     rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
                     
-                    with st.expander(f"✏️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
@@ -946,6 +949,8 @@ with tab1_c:
                                 
                             edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
                             edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(row['daily'] if row['daily'] in ["Yes", "No"] else "No"), key=f"e_daily_{rec_id}")
+                            
+                            # Proper Date Pickers for Editing Existing Record
                             edit_dt_start = st.date_input("Transit Date Start", value=curr_start_obj, key=f"e_dt_start_{rec_id}")
                             
                             if edit_daily == "Yes":
@@ -1016,7 +1021,7 @@ with tab2:
         with col2:
             recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
             max_rec_end = date.today() + timedelta(days=180) 
-            recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7))
+            recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7), key="rec_end_picker")
             
             if recurrence_end > max_rec_end:
                 st.error("⚠️ Max 6 months recurrence limit exceeded.")
@@ -1162,7 +1167,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
