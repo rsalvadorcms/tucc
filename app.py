@@ -426,7 +426,8 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            transit_date TEXT NOT NULL,
+            transit_date_start TEXT NOT NULL,
+            transit_date_end TEXT NOT NULL,
             group_name TEXT DEFAULT 'TBA',
             requested_by TEXT,
             etd_1 TEXT,
@@ -475,9 +476,19 @@ def run_migrations():
     if "emp_name" not in ot_cols:
         cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
 
-    # Migrations for daily_transit table
+    # Migrations for daily_transit table: rename transit_date -> transit_date_start and add transit_date_end
     cursor.execute("PRAGMA table_info(daily_transit)")
     dt_cols = [col[1] for col in cursor.fetchall()]
+
+    if "transit_date" in dt_cols and "transit_date_start" not in dt_cols:
+        cursor.execute("ALTER TABLE daily_transit RENAME COLUMN transit_date TO transit_date_start")
+    
+    cursor.execute("PRAGMA table_info(daily_transit)")
+    dt_cols_updated = [col[1] for col in cursor.fetchall()]
+    if "transit_date_end" not in dt_cols_updated:
+        cursor.execute("ALTER TABLE daily_transit ADD COLUMN transit_date_end TEXT")
+        cursor.execute("UPDATE daily_transit SET transit_date_end = transit_date_start WHERE transit_date_end IS NULL")
+
     new_dt_fields = {
         "requested_by": "TEXT",
         "etd_1": "TEXT",
@@ -487,7 +498,7 @@ def run_migrations():
         "daily": "TEXT DEFAULT 'No'"
     }
     for col_name, col_type in new_dt_fields.items():
-        if col_name not in dt_cols:
+        if col_name not in dt_cols_updated:
             cursor.execute(f"ALTER TABLE daily_transit ADD COLUMN {col_name} {col_type}")
 
     conn.commit()
@@ -782,10 +793,33 @@ with tab1_c:
         
         requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by))
         
+        # Daily / Recurring Journey Control
+        if is_admin:
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
+        else:
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
+
+        # Transit Date Start Control (Current or Future Date, Max 30 Days)
         min_date = date.today()
         max_date = min_date + timedelta(days=30)
-        dispatch_date = st.date_input("Select Transit Date", value=min_date, min_value=min_date, max_value=max_date)
-        disp_date_str = dispatch_date.strftime("%Y-%m-%d") if dispatch_date else ""
+        
+        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date)
+        disp_date_start_str = dispatch_date_start.strftime("%Y-%m-%d") if dispatch_date_start else ""
+        
+        # Transit Date End Control Logic
+        if is_daily == "Yes":
+            dispatch_date_end = st.date_input(
+                "Select Transit End Date", 
+                value=dispatch_date_start + timedelta(days=1), 
+                min_value=dispatch_date_start + timedelta(days=1),
+                max_value=max_date + timedelta(days=180)
+            )
+            disp_date_end_str = dispatch_date_end.strftime("%Y-%m-%d") if dispatch_date_end else ""
+            st.caption("ℹ️ **Recurring Daily Journey**: Start Date must be earlier than End Date.")
+        else:
+            dispatch_date_end = dispatch_date_start
+            disp_date_end_str = disp_date_start_str
+            st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
         location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
         location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
@@ -799,38 +833,39 @@ with tab1_c:
         group_options = ["TBA"] + available_groups
         if is_admin:
             selected_group = st.selectbox("Assigned Group / Car Name", options=group_options, index=0)
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
         else:
             selected_group = st.selectbox("Assigned Group / Car Name", options=["TBA"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
 
     if st.button("Submit Transit Dispatch Request"):
-        if not disp_date_str:
-            st.error("❌ Submission Failed: Transit Date cannot be blank.")
+        if not disp_date_start_str or not disp_date_end_str:
+            st.error("❌ Submission Failed: Transit Start and End Dates cannot be blank.")
+        elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
+            st.error("❌ Submission Failed: For daily recurring journeys, Start Date must be strictly earlier than End Date.")
         elif not location_from or not location_to:
             st.error("❌ Submission Failed: Origin and Target Locations cannot be blank.")
         else:
             conn = get_db_connection()
             conn.execute('''
-                INSERT INTO daily_transit (transit_date, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (disp_date_str, selected_group, requested_by, etd_1, etd_2, location_from, location_to, is_daily))
+                INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, etd_1, etd_2, location_from, location_to, is_daily))
             conn.commit()
             conn.close()
-            st.success(f"🎉 Transit dispatch successfully requested for {requested_by} on {disp_date_str}!")
+            st.success(f"🎉 Transit dispatch successfully requested for {requested_by} ({disp_date_start_str} to {disp_date_end_str})!")
             st.rerun()
 
     st.markdown("---")
     st.subheader("📊 Scheduled Transit Dispatches Log")
     
     conn = get_db_connection()
-    daily_raw_df = pd.read_sql_query("SELECT * FROM daily_transit ORDER BY transit_date DESC, id DESC", conn)
+    daily_raw_df = pd.read_sql_query("SELECT * FROM daily_transit ORDER BY transit_date_start DESC, id DESC", conn)
     conn.close()
     
     if not daily_raw_df.empty:
         export_df = daily_raw_df.rename(columns={
             "id": "Dispatch ID",
-            "transit_date": "Transit Date",
+            "transit_date_start": "Transit Date Start",
+            "transit_date_end": "Transit Date End",
             "requested_by": "Requested By",
             "group_name": "Group / Car",
             "location_from": "Origin (From)",
@@ -855,7 +890,6 @@ with tab1_c:
             st.markdown("---")
             st.subheader("🛠️ Admin Management: Edit / Delete Dispatch Records")
             
-            # --- SEARCH AND FILTER PANEL ---
             with st.expander("🔍 Search & Filter Dispatch Records", expanded=True):
                 sf_col1, sf_col2, sf_col3 = st.columns([2, 2, 2])
                 
@@ -868,10 +902,8 @@ with tab1_c:
                 with sf_col3:
                     filter_date_range = st.date_input("Filter by Date Range", value=[], key="filter_dt_range")
 
-            # Apply Filter Logic to Data
             filtered_df = daily_raw_df.copy()
             
-            # 1. Text Search Filter
             if search_query:
                 sq = search_query.lower()
                 filtered_df = filtered_df[
@@ -881,37 +913,47 @@ with tab1_c:
                     filtered_df['group_name'].astype(str).str.lower().str.contains(sq)
                 ]
                 
-            # 2. Group Filter
             if filter_group != "All":
                 filtered_df = filtered_df[filtered_df['group_name'] == filter_group]
                 
-            # 3. Date Range Filter
             if len(filter_date_range) == 2:
                 start_f, end_f = filter_date_range
-                filtered_df['dt_obj'] = pd.to_datetime(filtered_df['transit_date']).dt.date
+                filtered_df['dt_obj'] = pd.to_datetime(filtered_df['transit_date_start']).dt.date
                 filtered_df = filtered_df[(filtered_df['dt_obj'] >= start_f) & (filtered_df['dt_obj'] <= end_f)]
 
             st.caption(f"Showing **{len(filtered_df)}** of **{len(daily_raw_df)}** recorded dispatches.")
             
             group_options_all = ["TBA"] + available_groups
             
-            # Render Expandable Edit Cards for Filtered Items
             if not filtered_df.empty:
                 for idx, row in filtered_df.iterrows():
                     rec_id = row['id']
-                    rec_title = f"ID #{rec_id} | {row['transit_date']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
+                    rec_title = f"ID #{rec_id} | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({row['group_name']})"
                     
-                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
                             try:
-                                curr_dt_obj = datetime.strptime(row['transit_date'], "%Y-%m-%d").date()
+                                curr_start_obj = datetime.strptime(row['transit_date_start'], "%Y-%m-%d").date()
                             except (ValueError, TypeError):
-                                curr_dt_obj = date.today()
+                                curr_start_obj = date.today()
+
+                            try:
+                                curr_end_obj = datetime.strptime(row['transit_date_end'], "%Y-%m-%d").date()
+                            except (ValueError, TypeError):
+                                curr_end_obj = curr_start_obj
                                 
                             edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
-                            edit_date = st.date_input("Transit Date", value=curr_dt_obj, key=f"e_dt_{rec_id}")
+                            edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(row['daily'] if row['daily'] in ["Yes", "No"] else "No"), key=f"e_daily_{rec_id}")
+                            edit_dt_start = st.date_input("Transit Date Start", value=curr_start_obj, key=f"e_dt_start_{rec_id}")
+                            
+                            if edit_daily == "Yes":
+                                edit_dt_end = st.date_input("Transit Date End", value=max(curr_end_obj, edit_dt_start + timedelta(days=1)), min_value=edit_dt_start + timedelta(days=1), key=f"e_dt_end_{rec_id}")
+                            else:
+                                edit_dt_end = edit_dt_start
+                                st.caption("ℹ️ Non-recurring: Date End automatically set to Date Start.")
+
                             edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "Yard-1 Office", key=f"e_loc_from_{rec_id}")
                             edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
 
@@ -921,9 +963,6 @@ with tab1_c:
                             
                             curr_grp = row['group_name'] if row['group_name'] in group_options_all else "TBA"
                             edit_grp = st.selectbox("Group / Car Name", options=group_options_all, index=group_options_all.index(curr_grp), key=f"e_grp_{rec_id}")
-                            
-                            curr_daily = row['daily'] if row['daily'] in ["Yes", "No"] else "No"
-                            edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(curr_daily), key=f"e_daily_{rec_id}")
 
                         btn_col1, btn_col2 = st.columns([1, 4])
                         
@@ -932,9 +971,9 @@ with tab1_c:
                                 conn = get_db_connection()
                                 conn.execute('''
                                     UPDATE daily_transit
-                                    SET transit_date=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
+                                    SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?
                                     WHERE id=?
-                                ''', (edit_date.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
+                                ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_etd1, edit_etd2, edit_loc_from, edit_loc_to, edit_daily, rec_id))
                                 conn.commit()
                                 conn.close()
                                 st.success(f"Record ID #{rec_id} updated successfully!")
@@ -1123,7 +1162,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
