@@ -5,19 +5,28 @@ import io
 import urllib.parse
 import string
 import os
+import base64
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.drawing.image import Image as OpenpyxlImage
 
-import matplotlib.pyplot as plt
+# Optional imports for PDF & PNG rendering
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
 
-# ReportLab imports for PDF export
-from reportlab.lib.pagesizes import A3, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+try:
+    from reportlab.lib.pagesizes import A3, landscape
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
 
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
@@ -177,66 +186,51 @@ def export_custom_batam_excel(detailed_df):
 
 def export_custom_batam_pdf(detailed_df):
     """
-    Generates a PDF document for Detailed Allocations on A3 landscape paper size.
+    Generates a PDF matching the exact Excel grid print preview layout, 
+    including vertical cell merging across passenger groups.
     """
+    if not HAS_REPORTLAB:
+        return None
+        
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(A3),
-        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
+        rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25
     )
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
-        'DocTitle',
-        parent=styles['Heading1'],
-        fontName='Helvetica-Bold',
-        fontSize=16,
-        leading=20,
-        alignment=1, # Centered
-        textColor=colors.HexColor('#1F4E78')
+        'DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold',
+        fontSize=15, leading=19, alignment=1, textColor=colors.HexColor('#1F4E78')
     )
     subtitle_style = ParagraphStyle(
-        'DocSubtitle',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=11,
-        leading=14,
-        alignment=1,
-        textColor=colors.HexColor('#595959')
+        'DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold',
+        fontSize=11, leading=14, alignment=1, textColor=colors.HexColor('#333333')
     )
     cell_style = ParagraphStyle(
-        'CellText',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=9,
-        leading=11,
-        alignment=1 # Centered
+        'CellText', parent=styles['Normal'], fontName='Helvetica',
+        fontSize=9, leading=11, alignment=1
     )
     header_style = ParagraphStyle(
-        'HeaderStyle',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=10,
-        leading=12,
-        alignment=1,
-        textColor=colors.white
+        'HeaderStyle', parent=styles['Normal'], fontName='Helvetica-Bold',
+        fontSize=10, leading=12, alignment=1, textColor=colors.white
     )
     
     story = []
     
-    # Title Block Elements
+    # Title Block matching Excel B2:D4
     title_p = Paragraph("Daily Transportation Arrangement - Passenger list", title_style)
     sub1_p = Paragraph("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]", subtitle_style)
     sub2_p = Paragraph("JOB CODE : 0 - 0847 - 00 - 0001", subtitle_style)
     
-    header_box = [title_p, Spacer(1, 4), sub1_p, Spacer(1, 2), sub2_p]
+    header_box = [title_p, Spacer(1, 3), sub1_p, Spacer(1, 2), sub2_p]
     
-    img1_elem = RLImage(LOGO1_PATH, width=90, height=40) if os.path.exists(LOGO1_PATH) else ""
-    img2_elem = RLImage(LOGO2_PATH, width=110, height=40) if os.path.exists(LOGO2_PATH) else ""
+    img1_elem = RLImage(LOGO1_PATH, width=100, height=45) if os.path.exists(LOGO1_PATH) else ""
+    img2_elem = RLImage(LOGO2_PATH, width=120, height=45) if os.path.exists(LOGO2_PATH) else ""
     
     top_table_data = [[img1_elem, header_box, img2_elem]]
-    top_table = Table(top_table_data, colWidths=[120, 900, 120])
+    top_table = Table(top_table_data, colWidths=[130, 880, 130])
     top_table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('ALIGN', (0, 0), (0, 0), 'LEFT'),
@@ -251,39 +245,53 @@ def export_custom_batam_pdf(detailed_df):
     headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     table_data = [[Paragraph(h, header_style) for h in headers]]
     
-    for _, row_data in detailed_df.iterrows():
-        v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
-        p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
-        v_color = str(row_data.get("Color", "") or "Black").strip()
+    table_spans = []
+    current_grp = None
+    grp_start = 1 # 1-indexed (0 is header)
+    
+    for idx, row_data in enumerate(detailed_df.iterrows(), start=1):
+        r_val = row_data[1]
+        grp_name = r_val.get("Car Group", "")
         
+        v_model = str(r_val.get("Vehicle Model", "") or "Standard Vehicle").strip()
+        p_num = str(r_val.get("Plate Number", "") or "N/A").strip()
+        v_color = str(r_val.get("Color", "") or "Black").strip()
         v_desc_html = f"{v_model}<br/>{p_num}<br/>Color : {v_color}"
-        
-        d_name = str(row_data.get("Driver Name", "") or "")
-        c_num = str(row_data.get("Contact Number", "") or "")
-        p_name = str(row_data.get("Passenger Name", "") or "")
-        etd1 = str(row_data.get("ETD 1 (From)", "") or "")
-        etd2 = str(row_data.get("ETD 2 (To)", "") or "")
         
         row_cells = [
             Paragraph(v_desc_html, cell_style),
-            Paragraph(d_name, cell_style),
-            Paragraph(c_num, cell_style),
-            Paragraph(p_name, cell_style),
-            Paragraph(etd1, cell_style),
-            Paragraph(etd2, cell_style)
+            Paragraph(str(r_val.get("Driver Name", "") or ""), cell_style),
+            Paragraph(str(r_val.get("Contact Number", "") or ""), cell_style),
+            Paragraph(str(r_val.get("Passenger Name", "") or ""), cell_style),
+            Paragraph(str(r_val.get("ETD 1 (From)", "") or ""), cell_style),
+            Paragraph(str(r_val.get("ETD 2 (To)", "") or ""), cell_style)
         ]
         table_data.append(row_cells)
         
+        if grp_name != current_grp:
+            if current_grp is not None and (idx - 1) > grp_start:
+                for col_i in [0, 1, 2, 4, 5]:
+                    table_spans.append(('SPAN', (col_i, grp_start), (col_i, idx - 1)))
+            current_grp = grp_name
+            grp_start = idx
+
+    tot_rows = len(detailed_df)
+    if current_grp is not None and tot_rows > grp_start:
+        for col_i in [0, 1, 2, 4, 5]:
+            table_spans.append(('SPAN', (col_i, grp_start), (col_i, tot_rows)))
+            
     main_table = Table(table_data, colWidths=[200, 180, 180, 260, 160, 160])
-    main_table.setStyle(TableStyle([
+    
+    ts = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BFBFBF')),
         ('TOPPADDING', (0, 0), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
+    ] + table_spans
     
+    main_table.setStyle(TableStyle(ts))
     story.append(main_table)
     doc.build(story)
     
@@ -292,9 +300,14 @@ def export_custom_batam_pdf(detailed_df):
 
 def export_custom_batam_png(detailed_df):
     """
-    Generates a high-resolution PNG image of the Detailed Allocations schedule table.
+    Generates a high-resolution PNG image matching the exact print layout of the Excel file.
     """
+    if not HAS_MATPLOTLIB:
+        return None
+        
     prepared_rows = []
+    current_grp = None
+    
     for _, row_data in detailed_df.iterrows():
         v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
         p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
@@ -312,19 +325,20 @@ def export_custom_batam_png(detailed_df):
     columns = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     
     num_rows = len(prepared_rows)
-    fig_height = max(6, num_rows * 0.9 + 2)
+    fig_height = max(6, num_rows * 0.9 + 2.5)
     fig, ax = plt.subplots(figsize=(16, fig_height), dpi=200)
     ax.axis('off')
     
-    ax.text(0.5, 0.96, "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]",
-            ha='center', va='top', fontsize=14, fontweight='bold', color='#1F4E78', transform=ax.transAxes)
+    # Title Header Block (B2:D4 equivalent)
+    ax.text(0.5, 0.96, "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]\nJOB CODE : 0 - 0847 - 00 - 0001",
+            ha='center', va='top', fontsize=13, fontweight='bold', color='#1F4E78', transform=ax.transAxes)
     
     table = ax.table(cellText=prepared_rows, colLabels=columns, loc='center', cellLoc='center')
     table.auto_set_font_size(False)
     table.set_fontsize(10)
-    table.scale(1, 2.2)
+    table.scale(1, 2.3)
     
-    # Format Header Row
+    # Header Fill & Styling
     for col_idx in range(len(columns)):
         cell = table[(0, col_idx)]
         cell.set_facecolor('#1F4E78')
@@ -347,7 +361,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -358,7 +371,6 @@ def init_db():
         )
     ''')
     
-    # 2. holidays table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holidays (
             holiday_date TEXT PRIMARY KEY,
@@ -366,7 +378,6 @@ def init_db():
         )
     ''')
     
-    # 3. overtime_requests table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -382,7 +393,6 @@ def init_db():
         )
     ''')
     
-    # 4. meeting_rooms table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meeting_rooms (
             room_number TEXT PRIMARY KEY,
@@ -392,7 +402,6 @@ def init_db():
         )
     ''')
     
-    # 5. room_bookings table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS room_bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,7 +415,6 @@ def init_db():
         )
     ''')
 
-    # 6. cars table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cars (
             car_name TEXT PRIMARY KEY,
@@ -416,7 +424,6 @@ def init_db():
         )
     ''')
 
-    # 7. fleet_drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
             driver_name TEXT PRIMARY KEY,
@@ -424,7 +431,6 @@ def init_db():
         )
     ''')
 
-    # 8. transit_groups table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -437,7 +443,6 @@ def init_db():
         )
     ''')
 
-    # 9. transit_passengers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_passengers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,7 +452,6 @@ def init_db():
         )
     ''')
 
-    # 10. daily_transit table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -457,7 +461,6 @@ def init_db():
         )
     ''')
     
-    # Seed Admin user if not exists
     cursor.execute("SELECT * FROM users WHERE username='admin'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
@@ -482,7 +485,6 @@ def init_db():
 
 init_db()
 
-# Schema migrations helper
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -575,7 +577,7 @@ with tab1:
             if is_sunday or is_holiday:
                 default_dep_time = start_time
                 default_ret_time = end_time
-                st.caption("ℹ️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
+                st.caption("ℹ️️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
             else:
                 default_dep_time = end_time
                 default_ret_time = time(23, 0)
@@ -671,7 +673,6 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     
-    # Sheet Data: Unrolled Passengers for Detailed Allocations
     unrolled_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
@@ -687,10 +688,9 @@ with tab1_b:
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
         
-        # Build Export Files: Excel (Detailed Allocations only), PDF, and PNG
         excel_bytes = export_custom_batam_excel(unrolled_df)
-        pdf_bytes = export_custom_batam_pdf(unrolled_df)
-        png_bytes = export_custom_batam_png(unrolled_df)
+        pdf_bytes = export_custom_batam_pdf(unrolled_df) if HAS_REPORTLAB else None
+        png_bytes = export_custom_batam_png(unrolled_df) if HAS_MATPLOTLIB else None
 
         col_ex, col_pdf, col_png = st.columns(3)
         
@@ -704,22 +704,28 @@ with tab1_b:
             )
             
         with col_pdf:
-            st.download_button(
-                label="📄 Export to PDF (.pdf)",
-                data=pdf_bytes,
-                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            if HAS_REPORTLAB and pdf_bytes:
+                st.download_button(
+                    label="📄 Export to PDF (.pdf)",
+                    data=pdf_bytes,
+                    file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.info("📄 PDF Export: Add `reportlab` to `requirements.txt` to enable.")
             
         with col_png:
-            st.download_button(
-                label="🖼️ Export to PNG Image (.png)",
-                data=png_bytes,
-                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.png",
-                mime="image/png",
-                use_container_width=True
-            )
+            if HAS_MATPLOTLIB and png_bytes:
+                st.download_button(
+                    label="🖼️ Export to PNG Image (.png)",
+                    data=png_bytes,
+                    file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
+            else:
+                st.info("🖼️ PNG Export: Add `matplotlib` to `requirements.txt` to enable.")
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
