@@ -121,7 +121,7 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         ws1.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     # --------------------------------------------------------------------------
-    # SHEET 2: DETAILED ALLOCATIONS (A3 Paper, Merged B2:D4, 3-Line Vehicle Desc)
+    # SHEET 2: DETAILED ALLOCATIONS (A3 Paper, Merged B2:D4, Auto Fit Row Heights)
     # --------------------------------------------------------------------------
     ws2 = wb.create_sheet(title="Detailed Allocations")
     ws2.views.sheetView[0].showGridLines = True
@@ -187,8 +187,7 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         
         ordered_vals = [v_desc_3lines, d_name, c_num, p_name, etd1, etd2]
         
-        ws2.row_dimensions[r_idx].height = 42
-        
+        # Row height is left unconstrained so Excel automatically fits content without extra space
         for c_idx, val in enumerate(ordered_vals, start=1):
             cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
             cell.font = font_data
@@ -467,7 +466,7 @@ with tab1:
             if is_sunday or is_holiday:
                 default_dep_time = start_time
                 default_ret_time = end_time
-                st.caption("ℹ️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
+                st.caption("ℹ️️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
             else:
                 default_dep_time = end_time
                 default_ret_time = time(23, 0)
@@ -651,7 +650,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
