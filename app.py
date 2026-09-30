@@ -42,7 +42,6 @@ def format_military_time(input_str: str) -> str:
     if not input_str:
         return ""
     
-    # Strip non-numeric characters
     clean_digits = re.sub(r'\D', '', str(input_str).strip())
     
     if len(clean_digits) == 3: # e.g. 800 -> 0800
@@ -68,11 +67,6 @@ def export_df_to_excel(df, sheet_name="Data"):
     return buffer.getvalue()
 
 def export_custom_batam_excel(detailed_df, effective_date_str=""):
-    """
-    Generates a customized Excel workbook containing ONLY the 'Detailed Allocations' sheet
-    with repeating headers on print, row height = 20 for rows 2-4, white fill for A1:F5,
-    fixed widths for Column B (12) and Column C (18), and Effective Date in E5:F5.
-    """
     wb = openpyxl.Workbook()
     
     font_title = Font(name="Calibri", size=13, bold=True, color="1F4E78")
@@ -90,27 +84,22 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
         bottom=Side(style='thin', color='BFBFBF')
     )
 
-    # DETAILED ALLOCATIONS SHEET
     ws2 = wb.active
     ws2.title = "Detailed Allocations"
     ws2.views.sheetView[0].showGridLines = True
     
-    # Configure Paper Size to A3 Portrait and repeat rows 1 to 6 on every printed page
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
     ws2.page_setup.orientation = ws2.ORIENTATION_PORTRAIT
     ws2.print_title_rows = '1:6'
     
-    # Fill white color for cells A1:F5
     for r in range(1, 6):
         for c in range(1, 7):
             ws2.cell(row=r, column=c).fill = white_fill
 
-    # Adjust row height to 20 for rows 2, 3, and 4
     ws2.row_dimensions[2].height = 20
     ws2.row_dimensions[3].height = 20
     ws2.row_dimensions[4].height = 20
 
-    # Write Effective Date in E5 and F5
     cell_e5 = ws2.cell(row=5, column=5, value="Effective Date:")
     cell_e5.font = font_bold_label
     cell_e5.alignment = Alignment(horizontal="right", vertical="center")
@@ -121,14 +110,12 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
 
     start_row = 6
     
-    # Merge cells B2:D4 for Title Header Block
     ws2.merge_cells("B2:D4")
     title_cell = ws2["B2"]
     title_cell.value = "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]\nJOB CODE : 0 - 0847 - 00 - 0001"
     title_cell.font = font_title
     title_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     
-    # Top-Left Logo (A2)
     if os.path.exists(LOGO1_PATH):
         try:
             img1_det = OpenpyxlImage(LOGO1_PATH)
@@ -138,7 +125,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
         except Exception:
             pass
 
-    # Top-Right Logo (F2)
     if os.path.exists(LOGO2_PATH):
         try:
             img2_det = OpenpyxlImage(LOGO2_PATH)
@@ -185,7 +171,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Merge repeated vehicle & driver details vertically per group
     if not detailed_df.empty:
         current_grp = None
         grp_start = data_start
@@ -205,7 +190,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
                 ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=data_start + tot_rows - 1, end_column=merge_col)
                 ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Apply column width logic
     for col in ws2.columns:
         col_letter = col[0].column_letter
         if col_letter == 'B':
@@ -226,9 +210,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     return buffer.getvalue()
 
 def export_custom_batam_pdf(detailed_df, effective_date_str=""):
-    """
-    Generates a PDF on A3 Portrait matching the Excel layout with Effective Date in E5/F5 block.
-    """
     if not HAS_REPORTLAB:
         return None
         
@@ -504,7 +485,6 @@ def run_migrations():
     if "emp_name" not in ot_cols:
         cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
 
-    # Migrations for daily_transit table
     cursor.execute("PRAGMA table_info(daily_transit)")
     dt_cols = [col[1] for col in cursor.fetchall()]
 
@@ -813,7 +793,17 @@ with tab1_c:
     all_emp_names = users_df['emp_name'].tolist()
     
     cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
+    
+    # Query previously saved origin and destination locations to populate suggestion drop-down list
+    origins_df = pd.read_sql_query("SELECT DISTINCT location_from FROM daily_transit WHERE location_from IS NOT NULL AND location_from != ''", conn)
+    dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL AND location_to != ''", conn)
     conn.close()
+    
+    # Baseline defaults for location suggestions
+    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport", "Harbour Bay Ferry Terminal"]
+    
+    existing_origins = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
+    existing_dests = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
     
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
     if not all_emp_names:
@@ -838,21 +828,27 @@ with tab1_c:
             car_label_to_group[label_str] = c_name
             car_group_to_label[c_name] = label_str
 
+    # Form Reset Keys Initialization
+    if "dispatch_reset_counter" not in st.session_state:
+        st.session_state.dispatch_reset_counter = 0
+        
+    reset_id = st.session_state.dispatch_reset_counter
+
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Configure Transit Request")
         
-        requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by))
+        requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by), key=f"dt_req_{reset_id}")
         
         if is_admin:
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0)
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0, key=f"dt_daily_{reset_id}")
         else:
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.")
+            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.", key=f"dt_daily_{reset_id}")
 
         min_date = date.today()
         max_date = min_date + timedelta(days=30)
         
-        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date, key="reg_dt_start")
+        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date, key=f"reg_dt_start_{reset_id}")
         disp_date_start_str = dispatch_date_start.strftime("%Y-%m-%d") if dispatch_date_start else ""
         
         if is_daily == "Yes":
@@ -861,7 +857,7 @@ with tab1_c:
                 value=dispatch_date_start + timedelta(days=1), 
                 min_value=dispatch_date_start + timedelta(days=1),
                 max_value=max_date + timedelta(days=180),
-                key="reg_dt_end"
+                key=f"reg_dt_end_{reset_id}"
             )
             disp_date_end_str = dispatch_date_end.strftime("%Y-%m-%d") if dispatch_date_end else ""
             st.caption("ℹ️ **Recurring Daily Journey**: Start Date must be earlier than End Date.")
@@ -870,46 +866,74 @@ with tab1_c:
             disp_date_end_str = disp_date_start_str
             st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
         
-        location_from = st.text_input("Origin Location (Location From)", value="Yard-1 Office")
-        location_to = st.text_input("Target Location (Location To)", value="Yard-3 Office")
+        # Suggested Location From Selectbox with manual text overrides option
+        sel_loc_from = st.selectbox(
+            "Origin Location (Select standard location or enter custom below)", 
+            options=["Custom / Manual Entry..."] + existing_origins, 
+            index=1 if "Yard-1 Office" in existing_origins else 0,
+            key=f"sel_loc_from_{reset_id}"
+        )
+        if sel_loc_from == "Custom / Manual Entry...":
+            location_from = st.text_input("Enter Custom Origin Location", value="", key=f"txt_loc_from_{reset_id}")
+        else:
+            location_from = sel_loc_from
+
+        # Suggested Location To Selectbox with manual text overrides option
+        sel_loc_to = st.selectbox(
+            "Target Location (Select standard location or enter custom below)", 
+            options=["Custom / Manual Entry..."] + existing_dests, 
+            index=1 if "Yard-3 Office" in existing_dests else 0,
+            key=f"sel_loc_to_{reset_id}"
+        )
+        if sel_loc_to == "Custom / Manual Entry...":
+            location_to = st.text_input("Enter Custom Target Location", value="", key=f"txt_loc_to_{reset_id}")
+        else:
+            location_to = sel_loc_to
 
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
         
-        # Strict Military Time inputs (Auto-formatting support)
-        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value="08:00", placeholder="0800 or 08:00")
-        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value="17:00", placeholder="1700 or 17:00")
+        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value="08:00", placeholder="0800 or 08:00", key=f"etd1_{reset_id}")
+        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value="17:00", placeholder="1700 or 17:00", key=f"etd2_{reset_id}")
         
         if is_admin:
-            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0)
+            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0, key=f"car_{reset_id}")
             selected_group = car_label_to_group.get(selected_car_label, "TBA")
         else:
-            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=["TBA - To Be Assigned"], index=0, disabled=True, help="Group name assignment is managed by Administrator.")
+            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=["TBA - To Be Assigned"], index=0, disabled=True, help="Group name assignment is managed by Administrator.", key=f"car_{reset_id}")
             selected_group = "TBA"
 
-    if st.button("Submit Transit Dispatch Request"):
-        formatted_etd1 = format_military_time(raw_etd1)
-        formatted_etd2 = format_military_time(raw_etd2)
-        
-        if not formatted_etd1:
-            st.error("❌ Invalid ETD 1 Time Format: Please enter a valid military time (e.g., 0800 or 08:00).")
-        elif not formatted_etd2:
-            st.error("❌ Invalid ETD 2 Time Format: Please enter a valid military time (e.g., 1700 or 17:00).")
-        elif not disp_date_start_str or not disp_date_end_str:
-            st.error("❌ Submission Failed: Transit Start and End Dates cannot be blank.")
-        elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
-            st.error("❌ Submission Failed: For daily recurring journeys, Start Date must be strictly earlier than End Date.")
-        elif not location_from or not location_to:
-            st.error("❌ Submission Failed: Origin and Target Locations cannot be blank.")
-        else:
-            conn = get_db_connection()
-            conn.execute('''
-                INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, location_from, location_to, is_daily))
-            conn.commit()
-            conn.close()
-            st.success(f"🎉 Transit dispatch successfully requested for {requested_by} ({disp_date_start_str} to {disp_date_end_str})!")
+    b_col1, b_col2 = st.columns([1, 4])
+    
+    with b_col1:
+        if st.button("Submit Transit Request", type="primary"):
+            formatted_etd1 = format_military_time(raw_etd1)
+            formatted_etd2 = format_military_time(raw_etd2)
+            
+            if not formatted_etd1:
+                st.error("❌ Invalid ETD 1 Time Format: Please enter a valid military time (e.g., 0800 or 08:00).")
+            elif not formatted_etd2:
+                st.error("❌ Invalid ETD 2 Time Format: Please enter a valid military time (e.g., 1700 or 17:00).")
+            elif not disp_date_start_str or not disp_date_end_str:
+                st.error("❌ Submission Failed: Transit Start and End Dates cannot be blank.")
+            elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
+                st.error("❌ Submission Failed: For daily recurring journeys, Start Date must be strictly earlier than End Date.")
+            elif not location_from or not location_to:
+                st.error("❌ Submission Failed: Origin and Target Locations cannot be blank.")
+            else:
+                conn = get_db_connection()
+                conn.execute('''
+                    INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, location_from, location_to, is_daily))
+                conn.commit()
+                conn.close()
+                st.success(f"🎉 Transit dispatch successfully requested for {requested_by} ({disp_date_start_str} to {disp_date_end_str})!")
+                st.rerun()
+
+    with b_col2:
+        if st.button("🧹 Clear Form Inputs"):
+            st.session_state.dispatch_reset_counter += 1
             st.rerun()
 
     st.markdown("---")
@@ -1034,8 +1058,18 @@ with tab1_c:
                                 edit_dt_end = edit_dt_start
                                 st.caption("ℹ️ Non-recurring: Date End automatically set to Date Start.")
 
-                            edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "Yard-1 Office", key=f"e_loc_from_{rec_id}")
-                            edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "Yard-3 Office", key=f"e_loc_to_{rec_id}")
+                            # Autocomplete suggestions for editing origin and destination
+                            edit_sel_loc_from = st.selectbox("Origin Location", options=["Custom / Manual Entry..."] + existing_origins, index=existing_origins.index(row['location_from']) + 1 if row['location_from'] in existing_origins else 0, key=f"e_sel_loc_from_{rec_id}")
+                            if edit_sel_loc_from == "Custom / Manual Entry...":
+                                edit_loc_from = st.text_input("Custom Origin Location", value=row['location_from'] or "", key=f"e_loc_from_{rec_id}")
+                            else:
+                                edit_loc_from = edit_sel_loc_from
+
+                            edit_sel_loc_to = st.selectbox("Target Location", options=["Custom / Manual Entry..."] + existing_dests, index=existing_dests.index(row['location_to']) + 1 if row['location_to'] in existing_dests else 0, key=f"e_sel_loc_to_{rec_id}")
+                            if edit_sel_loc_to == "Custom / Manual Entry...":
+                                edit_loc_to = st.text_input("Custom Target Location", value=row['location_to'] or "", key=f"e_loc_to_{rec_id}")
+                            else:
+                                edit_loc_to = edit_sel_loc_to
 
                         with e_col2:
                             edit_raw_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
