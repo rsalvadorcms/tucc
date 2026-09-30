@@ -11,6 +11,14 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.drawing.image import Image as OpenpyxlImage
 
+import matplotlib.pyplot as plt
+
+# ReportLab imports for PDF export
+from reportlab.lib.pagesizes import A3, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
@@ -40,19 +48,11 @@ def generate_car_name(index):
         second = string.ascii_uppercase[index % 26]
         return f"Car {first}{second}"
 
-def export_custom_batam_excel(groups_summary_df, detailed_df):
+def export_custom_batam_excel(detailed_df):
     """
-    Generates a customized Excel workbook matching the 
-    'Template - Daily Transportation Arrangement TUCC Batam.xlsx' design layout.
+    Generates a customized Excel workbook containing ONLY the 'Detailed Allocations' sheet.
     """
     wb = openpyxl.Workbook()
-    
-    # --------------------------------------------------------------------------
-    # SHEET 1: Summary Format
-    # --------------------------------------------------------------------------
-    ws1 = wb.active
-    ws1.title = "DAILY TRANSPORTATION"
-    ws1.views.sheetView[0].showGridLines = True
     
     font_title = Font(name="Calibri", size=13, bold=True, color="1F4E78")
     font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
@@ -66,68 +66,16 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         top=Side(style='thin', color='BFBFBF'),
         bottom=Side(style='thin', color='BFBFBF')
     )
-    
-    # Merge B2:D4 for Header Block
-    ws1.merge_cells("B2:D4")
-    title_cell_s1 = ws1["B2"]
-    title_cell_s1.value = "DAILY TRANSPORTATION ARRANGEMENT\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]\nJOB CODE : 0 - 0847 - 00 - 0001"
-    title_cell_s1.font = font_title
-    title_cell_s1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    
-    if os.path.exists(LOGO1_PATH):
-        try:
-            img1 = OpenpyxlImage(LOGO1_PATH)
-            img1.width = 110
-            img1.height = 50
-            ws1.add_image(img1, "A2")
-        except Exception:
-            pass
 
-    if os.path.exists(LOGO2_PATH):
-        try:
-            img2 = OpenpyxlImage(LOGO2_PATH)
-            img2.width = 130
-            img2.height = 50
-            ws1.add_image(img2, "H2")
-        except Exception:
-            pass
-
-    headers = [
-        "Car Group", "Vehicle Model", "Plate Number", "Color", "Driver Name", 
-        "Contact Number", "Passenger(s)", "ETD 1 (From)", "ETD 2 (To)"
-    ]
-    
-    start_row = 6
-    for col_idx, h_title in enumerate(headers, start=1):
-        cell = ws1.cell(row=start_row, column=col_idx, value=h_title)
-        cell.font = font_header
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin_border
-        
-    for r_idx, row_vals in enumerate(groups_summary_df.values, start=start_row+1):
-        for c_idx, val in enumerate(row_vals, start=1):
-            cell = ws1.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
-            cell.font = font_data
-            cell.border = thin_border
-            if c_idx in [1, 3, 4, 8, 9]:
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                cell.alignment = Alignment(vertical="center")
-
-    for col in ws1.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = col[0].column_letter
-        ws1.column_dimensions[col_letter].width = max(max_len + 4, 12)
-
-    # --------------------------------------------------------------------------
-    # SHEET 2: DETAILED ALLOCATIONS (A3 Paper, Merged B2:D4, Auto Fit Row Heights)
-    # --------------------------------------------------------------------------
-    ws2 = wb.create_sheet(title="Detailed Allocations")
+    # DETAILED ALLOCATIONS SHEET ONLY
+    ws2 = wb.active
+    ws2.title = "Detailed Allocations"
     ws2.views.sheetView[0].showGridLines = True
     
     # Configure Paper Size to A3
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
+    
+    start_row = 6
     
     # Merge cells B2:D4 for Title Header Block
     ws2.merge_cells("B2:D4")
@@ -187,7 +135,6 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         
         ordered_vals = [v_desc_3lines, d_name, c_num, p_name, etd1, etd2]
         
-        # Row height is left unconstrained so Excel automatically fits content without extra space
         for c_idx, val in enumerate(ordered_vals, start=1):
             cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
             cell.font = font_data
@@ -227,6 +174,168 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+def export_custom_batam_pdf(detailed_df):
+    """
+    Generates a PDF document for Detailed Allocations on A3 landscape paper size.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A3),
+        rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
+    )
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=16,
+        leading=20,
+        alignment=1, # Centered
+        textColor=colors.HexColor('#1F4E78')
+    )
+    subtitle_style = ParagraphStyle(
+        'DocSubtitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        alignment=1,
+        textColor=colors.HexColor('#595959')
+    )
+    cell_style = ParagraphStyle(
+        'CellText',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9,
+        leading=11,
+        alignment=1 # Centered
+    )
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=12,
+        alignment=1,
+        textColor=colors.white
+    )
+    
+    story = []
+    
+    # Title Block Elements
+    title_p = Paragraph("Daily Transportation Arrangement - Passenger list", title_style)
+    sub1_p = Paragraph("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]", subtitle_style)
+    sub2_p = Paragraph("JOB CODE : 0 - 0847 - 00 - 0001", subtitle_style)
+    
+    header_box = [title_p, Spacer(1, 4), sub1_p, Spacer(1, 2), sub2_p]
+    
+    img1_elem = RLImage(LOGO1_PATH, width=90, height=40) if os.path.exists(LOGO1_PATH) else ""
+    img2_elem = RLImage(LOGO2_PATH, width=110, height=40) if os.path.exists(LOGO2_PATH) else ""
+    
+    top_table_data = [[img1_elem, header_box, img2_elem]]
+    top_table = Table(top_table_data, colWidths=[120, 900, 120])
+    top_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+        ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+    ]))
+    
+    story.append(top_table)
+    story.append(Spacer(1, 15))
+    
+    # Main Data Table
+    headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
+    table_data = [[Paragraph(h, header_style) for h in headers]]
+    
+    for _, row_data in detailed_df.iterrows():
+        v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
+        p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
+        v_color = str(row_data.get("Color", "") or "Black").strip()
+        
+        v_desc_html = f"{v_model}<br/>{p_num}<br/>Color : {v_color}"
+        
+        d_name = str(row_data.get("Driver Name", "") or "")
+        c_num = str(row_data.get("Contact Number", "") or "")
+        p_name = str(row_data.get("Passenger Name", "") or "")
+        etd1 = str(row_data.get("ETD 1 (From)", "") or "")
+        etd2 = str(row_data.get("ETD 2 (To)", "") or "")
+        
+        row_cells = [
+            Paragraph(v_desc_html, cell_style),
+            Paragraph(d_name, cell_style),
+            Paragraph(c_num, cell_style),
+            Paragraph(p_name, cell_style),
+            Paragraph(etd1, cell_style),
+            Paragraph(etd2, cell_style)
+        ]
+        table_data.append(row_cells)
+        
+    main_table = Table(table_data, colWidths=[200, 180, 180, 260, 160, 160])
+    main_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BFBFBF')),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    
+    story.append(main_table)
+    doc.build(story)
+    
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def export_custom_batam_png(detailed_df):
+    """
+    Generates a high-resolution PNG image of the Detailed Allocations schedule table.
+    """
+    prepared_rows = []
+    for _, row_data in detailed_df.iterrows():
+        v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
+        p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
+        v_color = str(row_data.get("Color", "") or "Black").strip()
+        
+        v_desc = f"{v_model}\n{p_num}\nColor : {v_color}"
+        d_name = str(row_data.get("Driver Name", "") or "")
+        c_num = str(row_data.get("Contact Number", "") or "")
+        p_name = str(row_data.get("Passenger Name", "") or "")
+        etd1 = str(row_data.get("ETD 1 (From)", "") or "")
+        etd2 = str(row_data.get("ETD 2 (To)", "") or "")
+        
+        prepared_rows.append([v_desc, d_name, c_num, p_name, etd1, etd2])
+        
+    columns = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
+    
+    num_rows = len(prepared_rows)
+    fig_height = max(6, num_rows * 0.9 + 2)
+    fig, ax = plt.subplots(figsize=(16, fig_height), dpi=200)
+    ax.axis('off')
+    
+    ax.text(0.5, 0.96, "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]",
+            ha='center', va='top', fontsize=14, fontweight='bold', color='#1F4E78', transform=ax.transAxes)
+    
+    table = ax.table(cellText=prepared_rows, colLabels=columns, loc='center', cellLoc='center')
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 2.2)
+    
+    # Format Header Row
+    for col_idx in range(len(columns)):
+        cell = table[(0, col_idx)]
+        cell.set_facecolor('#1F4E78')
+        cell.set_text_props(color='white', fontweight='bold')
+        
+    plt.tight_layout()
+    img_buffer = io.BytesIO()
+    plt.savefig(img_buffer, format='png', bbox_inches='tight')
+    plt.close(fig)
+    img_buffer.seek(0)
+    return img_buffer.getvalue()
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -466,7 +575,7 @@ with tab1:
             if is_sunday or is_holiday:
                 default_dep_time = start_time
                 default_ret_time = end_time
-                st.caption("ℹ️️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
+                st.caption("ℹ️ Sunday/Holiday Rule Applied: Departure = Start Time, Return = End Time.")
             else:
                 default_dep_time = end_time
                 default_ret_time = time(23, 0)
@@ -562,20 +671,7 @@ with tab1_b:
     st.subheader("📋 Configured Groups & Assigned Passengers")
     conn = get_db_connection()
     
-    # Sheet 1 Data: Grouped Passengers
-    groups_summary_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "Group Name", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
-               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
-               GROUP_CONCAT(tp.passengers, ', ') AS "Passengers",
-               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)"
-        FROM transit_groups tg
-        LEFT JOIN cars c ON tg.group_name = c.car_name
-        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
-        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
-        GROUP BY tg.id
-    ''', conn)
-
-    # Sheet 2 Data: Unrolled Passengers for Detailed Allocations
+    # Sheet Data: Unrolled Passengers for Detailed Allocations
     unrolled_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
@@ -588,18 +684,42 @@ with tab1_b:
     ''', conn)
     conn.close()
     
-    if not groups_summary_df.empty:
-        st.dataframe(groups_summary_df, use_container_width=True)
+    if not unrolled_df.empty:
+        st.dataframe(unrolled_df, use_container_width=True)
         
-        # Build Styled Batam TUCC Excel Workbook
-        excel_bytes = export_custom_batam_excel(groups_summary_df, unrolled_df)
+        # Build Export Files: Excel (Detailed Allocations only), PDF, and PNG
+        excel_bytes = export_custom_batam_excel(unrolled_df)
+        pdf_bytes = export_custom_batam_pdf(unrolled_df)
+        png_bytes = export_custom_batam_png(unrolled_df)
 
-        st.download_button(
-            label="📥 Download Custom Batam TUCC Excel Report (.xlsx)",
-            data=excel_bytes,
-            file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        col_ex, col_pdf, col_png = st.columns(3)
+        
+        with col_ex:
+            st.download_button(
+                label="📥 Export to Excel (.xlsx)",
+                data=excel_bytes,
+                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+        with col_pdf:
+            st.download_button(
+                label="📄 Export to PDF (.pdf)",
+                data=pdf_bytes,
+                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            
+        with col_png:
+            st.download_button(
+                label="🖼️ Export to PNG Image (.png)",
+                data=png_bytes,
+                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.png",
+                mime="image/png",
+                use_container_width=True
+            )
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
