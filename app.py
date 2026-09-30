@@ -14,7 +14,6 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
-# Ensure logo files exist locally for openpyxl export
 LOGO1_PATH = "logo.png"
 LOGO2_PATH = "logo2.png"
 
@@ -60,7 +59,6 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
     font_data = Font(name="Calibri", size=10)
     
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    zebra_fill = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")
     
     thin_border = Border(
         left=Side(style='thin', color='BFBFBF'),
@@ -108,13 +106,10 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         cell.border = thin_border
         
     for r_idx, row_vals in enumerate(groups_summary_df.values, start=start_row+1):
-        is_even = (r_idx % 2 == 0)
         for c_idx, val in enumerate(row_vals, start=1):
             cell = ws1.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
             cell.font = font_data
             cell.border = thin_border
-            if is_even:
-                cell.fill = zebra_fill
             if c_idx in [1, 3, 4, 8, 9]:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
@@ -134,14 +129,14 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
     # Configure Paper Size to A3
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
     
-    # 1. Merge cells B2:D4 for Title Header Block
+    # Merge cells B2:D4 for Title Header Block
     ws2.merge_cells("B2:D4")
     title_cell = ws2["B2"]
     title_cell.value = "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]\nJOB CODE : 0 - 0847 - 00 - 0001"
     title_cell.font = font_title
     title_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     
-    # 2. Top-Left Logo (A2 - Vertically aligned with header block B2:D4)
+    # Top-Left Logo (A2)
     if os.path.exists(LOGO1_PATH):
         try:
             img1_det = OpenpyxlImage(LOGO1_PATH)
@@ -151,7 +146,7 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         except Exception:
             pass
 
-    # 3. Top-Right Logo (F2 - Vertically aligned with header block B2:D4)
+    # Top-Right Logo (F2)
     if os.path.exists(LOGO2_PATH):
         try:
             img2_det = OpenpyxlImage(LOGO2_PATH)
@@ -161,7 +156,6 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         except Exception:
             pass
 
-    # Required column arrangement: Vehicle Description, Driver Name, Contact Number, Passenger, ETD 1, ETD 2
     det_headers = [
         "Vehicle Description", "Driver Name", "Contact Number", 
         "Passenger", "ETD 1", "ETD 2"
@@ -176,14 +170,9 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         
     data_start = start_row + 1
     
-    # Process & write rows
     for r_idx, row in enumerate(detailed_df.iterrows(), start=data_start):
         row_data = row[1]
         
-        # 4. Vehicle Description formatted into 3 distinct lines:
-        # Line 1: Vehicle Model
-        # Line 2: Plate Number
-        # Line 3: Color
         v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
         p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
         v_color = str(row_data.get("Color", "") or "Black").strip()
@@ -198,17 +187,13 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         
         ordered_vals = [v_desc_3lines, d_name, c_num, p_name, etd1, etd2]
         
-        is_even = (r_idx % 2 == 0)
-        ws2.row_dimensions[r_idx].height = 42 # Expand height to show 3 lines clearly
+        ws2.row_dimensions[r_idx].height = 42
         
         for c_idx, val in enumerate(ordered_vals, start=1):
             cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
             cell.font = font_data
             cell.border = thin_border
-            # Center align ALL cells in Sheet 2 with wrap text enabled
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            if is_even:
-                cell.fill = zebra_fill
 
     # Merge repeated vehicle & driver details vertically per group
     if not detailed_df.empty:
@@ -219,7 +204,6 @@ def export_custom_batam_excel(groups_summary_df, detailed_df):
         for idx, grp_val in enumerate(detailed_df['Car Group'].values, start=data_start):
             if grp_val != current_grp:
                 if current_grp is not None and (idx - 1) > grp_start:
-                    # Merge Vehicle Description (col 1), Driver Name (col 2), Contact Number (col 3), ETD 1 (col 5), ETD 2 (col 6)
                     for merge_col in [1, 2, 3, 5, 6]:
                         ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=idx - 1, end_column=merge_col)
                         ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -314,7 +298,7 @@ def init_db():
         )
     ''')
 
-    # 6. cars table (Added 'color' field)
+    # 6. cars table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cars (
             car_name TEXT PRIMARY KEY,
@@ -395,7 +379,6 @@ def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Migration: Add 'color' column to cars table if missing
     cursor.execute("PRAGMA table_info(cars)")
     car_cols = [col[1] for col in cursor.fetchall()]
     if "color" not in car_cols:
@@ -668,7 +651,7 @@ with tab1_c:
         conn.close()
         
         if not daily_df.empty:
-            summary_text = f"🚍 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
+            summary_text = f"機能 *TRANSPORTATION SUMMARY ({filter_date_str})*\n\n"
             
             for idx, row in daily_df.iterrows():
                 summary_text += f"*Vehicle:* {row['vehicle'] or 'N/A'} (Color: {row['color'] or 'N/A'})\n"
@@ -683,7 +666,7 @@ with tab1_c:
             wa_link = generate_whatsapp_link("", summary_text)
             st.link_button("📢 Send Transportation Summary to WhatsApp", wa_link)
             
-            with st.expander("👁️️ Preview WhatsApp Summary Text"):
+            with st.expander("👁 Preview WhatsApp Summary Text"):
                 st.text(summary_text)
 
     st.markdown("---")
