@@ -6,6 +6,10 @@ import urllib.parse
 import string
 import os
 import re
+import shutil
+import threading
+import time as time_module
+import schedule
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -27,6 +31,7 @@ st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
 LOGO1_PATH = "logo.png"
 LOGO2_PATH = "logo2.png"
+BACKUP_DIR = "backups"
 
 # ==============================================================================
 # ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
@@ -68,6 +73,46 @@ def set_transaction_dialog(title: str, message: str, status_type: str = "success
     st.session_state.tx_dialog_title = title
     st.session_state.tx_dialog_msg = message
     st.session_state.tx_dialog_type = status_type
+
+def perform_automated_backup():
+    """Creates a timestamped backup of the SQLite database and exports key tables to Excel."""
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR)
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if os.path.exists(DB_FILE):
+        backup_db_path = os.path.join(BACKUP_DIR, f"backup_db_{timestamp}.db")
+        shutil.copy2(DB_FILE, backup_db_path)
+        
+    try:
+        conn = get_db_connection()
+        backup_excel_path = os.path.join(BACKUP_DIR, f"backup_data_{timestamp}.xlsx")
+        with pd.ExcelWriter(backup_excel_path, engine='openpyxl') as writer:
+            pd.read_sql_query("SELECT * FROM daily_transit", conn).to_excel(writer, index=False, sheet_name="daily_transit")
+            pd.read_sql_query("SELECT * FROM overtime_requests", conn).to_excel(writer, index=False, sheet_name="overtime_requests")
+            pd.read_sql_query("SELECT * FROM room_bookings", conn).to_excel(writer, index=False, sheet_name="room_bookings")
+            pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
+            pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
+            pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
+        conn.close()
+    except Exception as e:
+        print(f"Excel backup export error: {e}")
+
+def run_scheduler():
+    """Background worker loop running scheduled backups at 11:30 AM and 5:30 PM."""
+    schedule.every().day.at("11:30").do(perform_automated_backup)
+    schedule.every().day.at("17:30").do(perform_automated_backup)
+    
+    while True:
+        schedule.run_pending()
+        time_module.sleep(60)
+
+# Start background backup scheduler thread once per session lifecycle
+if 'backup_scheduler_started' not in st.session_state:
+    st.session_state.backup_scheduler_started = True
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
 
 def format_military_time(input_str: str) -> str:
     """
@@ -518,18 +563,19 @@ def init_db():
         )
     ''')
     
-    cursor.execute("SELECT * FROM users WHERE username='admin'")
-    if not cursor.fetchone():
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
 
-    # Populate default records into trips table
-    default_trips = [
-        ("Trip A", "Yard to Yard"),
-        ("Trip B", "Sunday Panbil - Wasco - Panbil"),
-        ("Trip C", "Panbil - Destination - Panbil")
-    ]
-    for trip_code, trip_desc in default_trips:
-        cursor.execute("INSERT OR IGNORE INTO trips (trip, trip_name) VALUES (?, ?)", (trip_code, trip_desc))
+    cursor.execute("SELECT COUNT(*) FROM trips")
+    if cursor.fetchone()[0] == 0:
+        default_trips = [
+            ("Trip A", "Yard to Yard"),
+            ("Trip B", "Sunday Panbil - Wasco - Panbil"),
+            ("Trip C", "Panbil - Destination - Panbil")
+        ]
+        for trip_code, trip_desc in default_trips:
+            cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (?, ?)", (trip_code, trip_desc))
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone()[0] == 0:
@@ -590,7 +636,6 @@ def run_migrations():
         if col_name not in dt_cols_updated:
             cursor.execute(f"ALTER TABLE daily_transit ADD COLUMN {col_name} {col_type}")
 
-    # Ensure existing records with NULL trip are set to 'Trip A'
     cursor.execute("UPDATE daily_transit SET trip = 'Trip A' WHERE trip IS NULL OR trip = ''")
 
     conn.commit()
@@ -935,7 +980,7 @@ with tab1_c:
             label_str = f"{c_name} - {p_num}" + (f" ({v_model})" if v_model else "")
             car_option_labels.append(label_str)
             car_label_to_group[label_str] = c_name
-            car_group_to_label[c_name] = c_name
+            car_group_to_label[c_name] = label_str
 
     if "dispatch_reset_counter" not in st.session_state:
         st.session_state.dispatch_reset_counter = 0
@@ -1145,7 +1190,7 @@ with tab1_c:
                     grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
                     rec_title = f"ID #{rec_id} | [{row['trip'] or 'Trip A'}] | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
                     
-                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
@@ -1340,6 +1385,39 @@ with tab3:
     else:
         st.header("Admin Control Dashboard Engine")
         
+        # --- BACKUP & DISASTER RECOVERY MANAGEMENT ---
+        st.markdown("---")
+        st.subheader("💾 Database Backups & Disaster Recovery")
+        st.caption("ℹ️ Automated backups run daily at **11:30 AM** and **5:30 PM**.")
+        
+        b_col1, b_col2 = st.columns(2)
+        
+        with b_col1:
+            if st.button("🔄 Trigger Manual Backup Now"):
+                perform_automated_backup()
+                set_transaction_dialog("Data Transaction Successful", "Manual backup snapshot created successfully.", "success")
+                st.rerun()
+                
+        with b_col2:
+            if os.path.exists(BACKUP_DIR):
+                backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True)
+            else:
+                backup_files = []
+                
+            if backup_files:
+                selected_backup = st.selectbox("Select Backup Snapshot", backup_files)
+                if selected_backup:
+                    file_path = os.path.join(BACKUP_DIR, selected_backup)
+                    with open(file_path, "rb") as f:
+                        st.download_button(
+                            label=f"📥 Download Selected Backup ({selected_backup})",
+                            data=f,
+                            file_name=selected_backup,
+                            mime="application/octet-stream"
+                        )
+            else:
+                st.info("No backup snapshots found yet.")
+
         # --- EXCEL DATA IMPORT SECTION ---
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
@@ -1411,7 +1489,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
