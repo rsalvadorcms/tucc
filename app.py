@@ -701,7 +701,7 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.emp_name = ""
     st.rerun()
 
-tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "🛠️ System Administration"]
+tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "🛠️️ System Administration"]
 tab1, tab1_b, tab1_c, tab2, tab3 = st.tabs(tabs)
 
 # --- TAB 1: OVERTIME REQUESTS ---
@@ -1198,7 +1198,7 @@ with tab1_c:
                     grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
                     rec_title = f"ID #{rec_id} | [{row['trip'] or 'Trip A'}] | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
                     
-                    with st.expander(f"✏️ Manage Record: {rec_title}"):
+                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
                         e_col1, e_col2 = st.columns(2)
                         
                         with e_col1:
@@ -1229,7 +1229,7 @@ with tab1_c:
                                 edit_dt_end = st.date_input("Transit Date End", value=max(curr_end_obj, edit_dt_start + timedelta(days=1)), min_value=edit_dt_start + timedelta(days=1), key=f"e_dt_end_{rec_id}")
                             else:
                                 edit_dt_end = edit_dt_start
-                                st.caption("ℹ️ Non-recurring: Date End automatically set to Date Start.")
+                                st.caption("ℹ️️ Non-recurring: Date End automatically set to Date Start.")
 
                             edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "", placeholder="[origin_list_dl]", key=f"e_loc_from_{rec_id}")
                             edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "", placeholder="[dest_list_dl]", key=f"e_loc_to_{rec_id}")
@@ -1546,7 +1546,7 @@ with tab3:
                     
                     if selected_table == "users":
                         u_name = row_dict.get("username")
-                        if row_dict.get("password"] == "••••••••":
+                        if row_dict.get("password") == "••••••••":
                             row_dict["password"] = original_passwords.get(u_name, "")
                     
                     columns = [k for k in row_dict.keys() if row_dict[k] is not None]
