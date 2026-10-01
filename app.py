@@ -9,7 +9,6 @@ import re
 import shutil
 import threading
 import time as time_module
-import schedule
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -99,14 +98,23 @@ def perform_automated_backup():
     except Exception as e:
         print(f"Excel backup export error: {e}")
 
+_last_backup_slot = None
+
 def run_scheduler():
-    """Background worker loop running scheduled backups at 11:30 AM and 5:30 PM."""
-    schedule.every().day.at("11:30").do(perform_automated_backup)
-    schedule.every().day.at("17:30").do(perform_automated_backup)
-    
+    """Background worker loop running scheduled backups at 11:30 AM and 5:30 PM using standard libraries."""
+    global _last_backup_slot
     while True:
-        schedule.run_pending()
-        time_module.sleep(60)
+        now = datetime.now()
+        current_time_str = now.strftime("%H:%M")
+        current_date_str = now.strftime("%Y-%m-%d")
+        
+        if current_time_str in ["11:30", "17:30"]:
+            backup_key = f"{current_date_str}_{current_time_str}"
+            if _last_backup_slot != backup_key:
+                perform_automated_backup()
+                _last_backup_slot = backup_key
+                
+        time_module.sleep(30) # Check every 30 seconds
 
 # Start background backup scheduler thread once per session lifecycle
 if 'backup_scheduler_started' not in st.session_state:
@@ -980,7 +988,7 @@ with tab1_c:
             label_str = f"{c_name} - {p_num}" + (f" ({v_model})" if v_model else "")
             car_option_labels.append(label_str)
             car_label_to_group[label_str] = c_name
-            car_group_to_label[c_name] = label_str
+            car_group_to_label[c_name] = c_name
 
     if "dispatch_reset_counter" not in st.session_state:
         st.session_state.dispatch_reset_counter = 0
@@ -1489,7 +1497,7 @@ with tab3:
 
         # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
-        st.subheader("🗃️️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         table_options = ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
         selected_table = st.selectbox("Choose Database Table to Manage", table_options)
         
@@ -1538,7 +1546,7 @@ with tab3:
                     
                     if selected_table == "users":
                         u_name = row_dict.get("username")
-                        if row_dict.get("password") == "••••••••":
+                        if row_dict.get("password"] == "••••••••":
                             row_dict["password"] = original_passwords.get(u_name, "")
                     
                     columns = [k for k in row_dict.keys() if row_dict[k] is not None]
