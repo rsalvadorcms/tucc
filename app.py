@@ -31,6 +31,13 @@ st.set_page_config(page_title="Office Operations Portal", layout="wide")
 LOGO1_PATH = "logo.png"
 LOGO2_PATH = "logo2.png"
 BACKUP_DIR = "backups"
+NEWS_DIR = "site_news_uploads"
+
+# Ensure directories exist
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
+if not os.path.exists(NEWS_DIR):
+    os.makedirs(NEWS_DIR)
 
 # ==============================================================================
 # ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
@@ -94,6 +101,7 @@ def perform_automated_backup():
             pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
             pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
             pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
+            pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
         conn.close()
     except Exception as e:
         print(f"Excel backup export error: {e}")
@@ -114,7 +122,7 @@ def run_scheduler():
                 perform_automated_backup()
                 _last_backup_slot = backup_key
                 
-        time_module.sleep(30) # Check every 30 seconds
+        time_module.sleep(30)
 
 # Start background backup scheduler thread once per session lifecycle
 if 'backup_scheduler_started' not in st.session_state:
@@ -123,33 +131,23 @@ if 'backup_scheduler_started' not in st.session_state:
     scheduler_thread.start()
 
 def format_military_time(input_str: str) -> str:
-    """
-    Cleans user input and enforces 24-hour military time HH:MM format.
-    Accepts raw digits like '800' -> '08:00', '1730' -> '17:30', or '8:00' -> '08:00'.
-    Returns None if the input is completely invalid.
-    """
     if not input_str:
         return ""
-    
     clean_digits = re.sub(r'\D', '', str(input_str).strip())
-    
-    if len(clean_digits) == 3: # e.g. 800 -> 0800
+    if len(clean_digits) == 3:
         clean_digits = "0" + clean_digits
-    elif len(clean_digits) == 1: # e.g. 8 -> 0800
+    elif len(clean_digits) == 1:
         clean_digits = "0" + clean_digits + "00"
-    elif len(clean_digits) == 2: # e.g. 17 -> 1700
+    elif len(clean_digits) == 2:
         clean_digits = clean_digits + "00"
-        
     if len(clean_digits) == 4:
         hours = int(clean_digits[:2])
         minutes = int(clean_digits[2:])
         if 0 <= hours <= 23 and 0 <= minutes <= 59:
             return f"{hours:02d}:{minutes:02d}"
-            
     return None
 
 def render_datalist_options(list_id: str, options: list):
-    """Renders HTML datalist element to enable combobox suggestions on standard text inputs."""
     options_html = "".join([f'<option value="{opt}">' for opt in options if opt])
     st.components.v1.html(
         f"""
@@ -176,7 +174,6 @@ def render_datalist_options(list_id: str, options: list):
     )
 
 def export_df_to_excel(df, sheet_name="Data"):
-    """Generic helper function to export any pandas DataFrame to XLSX format."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -184,7 +181,6 @@ def export_df_to_excel(df, sheet_name="Data"):
 
 def export_custom_batam_excel(detailed_df, effective_date_str=""):
     wb = openpyxl.Workbook()
-    
     font_title = Font(name="Calibri", size=13, bold=True, color="1F4E78")
     font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     font_bold_label = Font(name="Calibri", size=10, bold=True, color="000000")
@@ -192,18 +188,14 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-    
     thin_border = Border(
-        left=Side(style='thin', color='BFBFBF'),
-        right=Side(style='thin', color='BFBFBF'),
-        top=Side(style='thin', color='BFBFBF'),
-        bottom=Side(style='thin', color='BFBFBF')
+        left=Side(style='thin', color='BFBFBF'), right=Side(style='thin', color='BFBFBF'),
+        top=Side(style='thin', color='BFBFBF'), bottom=Side(style='thin', color='BFBFBF')
     )
 
     ws2 = wb.active
     ws2.title = "Detailed Allocations"
     ws2.views.sheetView[0].showGridLines = True
-    
     ws2.page_setup.paperSize = ws2.PAPERSIZE_A3
     ws2.page_setup.orientation = ws2.ORIENTATION_PORTRAIT
     ws2.print_title_rows = '1:6'
@@ -225,7 +217,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     cell_f5.alignment = Alignment(horizontal="center", vertical="center")
 
     start_row = 6
-    
     ws2.merge_cells("B2:D4")
     title_cell = ws2["B2"]
     title_cell.value = "Daily Transportation Arrangement - Passenger list\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]\nJOB CODE : 0 - 0847 - 00 - 0001"
@@ -235,8 +226,7 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     if os.path.exists(LOGO1_PATH):
         try:
             img1_det = OpenpyxlImage(LOGO1_PATH)
-            img1_det.width = 110
-            img1_det.height = 50
+            img1_det.width = 110; img1_det.height = 50
             ws2.add_image(img1_det, "A2")
         except Exception:
             pass
@@ -244,33 +234,24 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     if os.path.exists(LOGO2_PATH):
         try:
             img2_det = OpenpyxlImage(LOGO2_PATH)
-            img2_det.width = 130
-            img2_det.height = 50
+            img2_det.width = 130; img2_det.height = 50
             ws2.add_image(img2_det, "F2")
         except Exception:
             pass
 
-    det_headers = [
-        "Vehicle Description", "Driver Name", "Contact Number", 
-        "Passenger", "ETD 1", "ETD 2"
-    ]
-    
+    det_headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     for col_idx, h_title in enumerate(det_headers, start=1):
         cell = ws2.cell(row=start_row, column=col_idx, value=h_title)
-        cell.font = font_header
-        cell.fill = header_fill
+        cell.font = font_header; cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = thin_border
         
     data_start = start_row + 1
-    
     for r_idx, row in enumerate(detailed_df.iterrows(), start=data_start):
         row_data = row[1]
-        
         v_model = str(row_data.get("Vehicle Model", "") or "Standard Vehicle").strip()
         p_num = str(row_data.get("Plate Number", "") or "N/A").strip()
         v_color = str(row_data.get("Color", "") or "Black").strip()
-        
         v_desc_3lines = f"{v_model}\n{p_num}\nColor : {v_color}"
             
         d_name = row_data.get("Driver Name", "")
@@ -280,18 +261,15 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
         etd2 = row_data.get("ETD 2 (To)", "")
         
         ordered_vals = [v_desc_3lines, d_name, c_num, p_name, etd1, etd2]
-        
         for c_idx, val in enumerate(ordered_vals, start=1):
             cell = ws2.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
-            cell.font = font_data
-            cell.border = thin_border
+            cell.font = font_data; cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     if not detailed_df.empty:
         current_grp = None
         grp_start = data_start
         tot_rows = len(detailed_df)
-        
         for idx, grp_val in enumerate(detailed_df['Car Group'].values, start=data_start):
             if grp_val != current_grp:
                 if current_grp is not None and (idx - 1) > grp_start:
@@ -300,7 +278,6 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
                         ws2.cell(row=grp_start, column=merge_col).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 current_grp = grp_val
                 grp_start = idx
-                
         if current_grp is not None and (data_start + tot_rows - 1) > grp_start:
             for merge_col in [1, 2, 3, 5, 6]:
                 ws2.merge_cells(start_row=grp_start, start_column=merge_col, end_row=data_start + tot_rows - 1, end_column=merge_col)
@@ -313,12 +290,7 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
         elif col_letter == 'C':
             ws2.column_dimensions['C'].width = 18
         else:
-            max_len = 0
-            for cell in col:
-                lines = str(cell.value or '').split('\n')
-                for line in lines:
-                    if len(line) > max_len:
-                        max_len = len(line)
+            max_len = max((len(str(cell.value or '')) for cell in col), default=0)
             ws2.column_dimensions[col_letter].width = max(max_len + 4, 18)
 
     buffer = io.BytesIO()
@@ -328,71 +300,38 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
 def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     if not HAS_REPORTLAB:
         return None
-        
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=portrait(A3),
-        rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25
-    )
-    
+    doc = SimpleDocTemplate(buffer, pagesize=portrait(A3), rightMargin=25, leftMargin=25, topMargin=25, bottomMargin=25)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold',
-        fontSize=15, leading=19, alignment=1, textColor=colors.HexColor('#1F4E78')
-    )
-    subtitle_style = ParagraphStyle(
-        'DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold',
-        fontSize=11, leading=14, alignment=1, textColor=colors.HexColor('#333333')
-    )
-    eff_date_style = ParagraphStyle(
-        'EffDateStyle', parent=styles['Normal'], fontName='Helvetica-Bold',
-        fontSize=10, leading=12, alignment=2, textColor=colors.HexColor('#000000')
-    )
-    cell_style = ParagraphStyle(
-        'CellText', parent=styles['Normal'], fontName='Helvetica',
-        fontSize=9, leading=11, alignment=1
-    )
-    header_style = ParagraphStyle(
-        'HeaderStyle', parent=styles['Normal'], fontName='Helvetica-Bold',
-        fontSize=10, leading=12, alignment=1, textColor=colors.white
-    )
+    
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=15, leading=19, alignment=1, textColor=colors.HexColor('#1F4E78'))
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=1, textColor=colors.HexColor('#333333'))
+    eff_date_style = ParagraphStyle('EffDateStyle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=2, textColor=colors.HexColor('#000000'))
+    cell_style = ParagraphStyle('CellText', parent=styles['Normal'], fontName='Helvetica', fontSize=9, leading=11, alignment=1)
+    header_style = ParagraphStyle('HeaderStyle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor=colors.white)
     
     story = []
-    
     title_p = Paragraph("Daily Transportation Arrangement - Passenger list", title_style)
     sub1_p = Paragraph("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]", subtitle_style)
     sub2_p = Paragraph("JOB CODE : 0 - 0847 - 00 - 0001", subtitle_style)
-    
     header_box = [title_p, Spacer(1, 3), sub1_p, Spacer(1, 2), sub2_p]
     
     img1_elem = RLImage(LOGO1_PATH, width=100, height=45) if os.path.exists(LOGO1_PATH) else ""
     img2_elem = RLImage(LOGO2_PATH, width=120, height=45) if os.path.exists(LOGO2_PATH) else ""
     
-    top_table_data = [[img1_elem, header_box, img2_elem]]
-    top_table = Table(top_table_data, colWidths=[110, 560, 110])
-    top_table.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
-        ('ALIGN', (1, 0), (1, 0), 'CENTER'),
-        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
-    ]))
-    
+    top_table = Table([[img1_elem, header_box, img2_elem]], colWidths=[110, 560, 110])
+    top_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('ALIGN', (0,0), (0,0), 'LEFT'), ('ALIGN', (1,0), (1,0), 'CENTER'), ('ALIGN', (2,0), (2,0), 'RIGHT')]))
     story.append(top_table)
     story.append(Spacer(1, 10))
     
     eff_p = Paragraph(f"<b>Effective Date:</b> {effective_date_str}", eff_date_style)
     eff_table = Table([[Paragraph("", cell_style), eff_p]], colWidths=[550, 230])
-    eff_table.setStyle(TableStyle([
-        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
+    eff_table.setStyle(TableStyle([('ALIGN', (1,0), (1,0), 'RIGHT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
     story.append(eff_table)
     story.append(Spacer(1, 8))
     
     headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     table_data = [[Paragraph(h, header_style) for h in headers]]
-    
     table_spans = []
     current_grp = None
     grp_start = 1
@@ -400,7 +339,6 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     for idx, row_data in enumerate(detailed_df.iterrows(), start=1):
         r_val = row_data[1]
         grp_name = r_val.get("Car Group", "")
-        
         v_model = str(r_val.get("Vehicle Model", "") or "Standard Vehicle").strip()
         p_num = str(r_val.get("Plate Number", "") or "N/A").strip()
         v_color = str(r_val.get("Color", "") or "Black").strip()
@@ -415,7 +353,6 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
             Paragraph(str(r_val.get("ETD 2 (To)", "") or ""), cell_style)
         ]
         table_data.append(row_cells)
-        
         if grp_name != current_grp:
             if current_grp is not None and (idx - 1) > grp_start:
                 for col_i in [0, 1, 2, 4, 5]:
@@ -429,20 +366,14 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
             table_spans.append(('SPAN', (col_i, grp_start), (col_i, tot_rows)))
             
     main_table = Table(table_data, colWidths=[150, 120, 120, 210, 90, 90], repeatRows=1)
-    
-    ts = [
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BFBFBF')),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ] + table_spans
-    
-    main_table.setStyle(TableStyle(ts))
+    main_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F4E78')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#BFBFBF')),
+        ('TOPPADDING', (0,0), (-1,-1), 6), ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ] + table_spans))
     story.append(main_table)
     doc.build(story)
-    
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -458,116 +389,73 @@ def init_db():
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL,
-            email_recipients TEXT,
-            emp_name TEXT
+            username TEXT PRIMARY KEY, password TEXT NOT NULL,
+            role TEXT NOT NULL, email_recipients TEXT, emp_name TEXT
         )
     ''')
-    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS holidays (
-            holiday_date TEXT PRIMARY KEY,
-            description TEXT
+            holiday_date TEXT PRIMARY KEY, description TEXT
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS trips (
-            trip TEXT PRIMARY KEY,
-            trip_name TEXT NOT NULL
+            trip TEXT PRIMARY KEY, trip_name TEXT NOT NULL
         )
     ''')
-    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS overtime_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            emp_name TEXT,
-            ot_date TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            needs_transport TEXT DEFAULT 'Yes',
-            origin TEXT,
-            destination TEXT,
-            departure_time TEXT,
-            return_time TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, emp_name TEXT,
+            ot_date TEXT, start_time TEXT, end_time TEXT, needs_transport TEXT DEFAULT 'Yes',
+            origin TEXT, destination TEXT, departure_time TEXT, return_time TEXT
         )
     ''')
-    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS meeting_rooms (
-            room_number TEXT PRIMARY KEY,
-            room_name TEXT,
-            capacity INTEGER,
-            location TEXT
+            room_number TEXT PRIMARY KEY, room_name TEXT, capacity INTEGER, location TEXT
         )
     ''')
-    
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS room_bookings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_number TEXT,
-            booked_by TEXT,
-            booking_date TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            is_recurring TEXT,
-            recurrence_end_date TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT, room_number TEXT, booked_by TEXT,
+            booking_date TEXT, start_time TEXT, end_time TEXT, is_recurring TEXT, recurrence_end_date TEXT
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cars (
-            car_name TEXT PRIMARY KEY,
-            plate_number TEXT UNIQUE NOT NULL,
-            vehicle TEXT,
-            color TEXT DEFAULT 'Black'
+            car_name TEXT PRIMARY KEY, plate_number TEXT UNIQUE NOT NULL, vehicle TEXT, color TEXT DEFAULT 'Black'
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS fleet_drivers (
-            driver_name TEXT PRIMARY KEY,
-            driver_mobile TEXT
+            driver_name TEXT PRIMARY KEY, driver_mobile TEXT
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_name TEXT UNIQUE NOT NULL,
-            driver_name TEXT,
-            etd_1 TEXT,
-            etd_2 TEXT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT, group_name TEXT UNIQUE NOT NULL,
+            driver_name TEXT, etd_1 TEXT, etd_2 TEXT,
             FOREIGN KEY (group_name) REFERENCES cars(car_name) ON DELETE CASCADE,
             FOREIGN KEY (driver_name) REFERENCES fleet_drivers(driver_name) ON DELETE SET NULL
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS transit_passengers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_name TEXT NOT NULL,
-            passengers TEXT NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT, group_name TEXT NOT NULL, passengers TEXT NOT NULL,
             FOREIGN KEY (group_name) REFERENCES transit_groups(group_name) ON DELETE CASCADE
         )
     ''')
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS daily_transit (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            transit_date_start TEXT NOT NULL,
-            transit_date_end TEXT NOT NULL,
-            group_name TEXT DEFAULT 'TBA',
-            requested_by TEXT,
-            etd_1 TEXT,
-            etd_2 TEXT,
-            location_from TEXT,
-            location_to TEXT,
-            daily TEXT DEFAULT 'No',
-            trip TEXT DEFAULT 'Trip A'
+            id INTEGER PRIMARY KEY AUTOINCREMENT, transit_date_start TEXT NOT NULL, transit_date_end TEXT NOT NULL,
+            group_name TEXT DEFAULT 'TBA', requested_by TEXT, etd_1 TEXT, etd_2 TEXT,
+            location_from TEXT, location_to TEXT, daily TEXT DEFAULT 'No', trip TEXT DEFAULT 'Trip A'
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS site_news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, filename TEXT NOT NULL,
+            file_path TEXT NOT NULL, file_type TEXT NOT NULL, uploaded_by TEXT, upload_date TEXT
         )
     ''')
     
@@ -577,13 +465,8 @@ def init_db():
 
     cursor.execute("SELECT COUNT(*) FROM trips")
     if cursor.fetchone()[0] == 0:
-        default_trips = [
-            ("Trip A", "Yard to Yard"),
-            ("Trip B", "Sunday Panbil - Wasco - Panbil"),
-            ("Trip C", "Panbil - Destination - Panbil")
-        ]
-        for trip_code, trip_desc in default_trips:
-            cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (?, ?)", (trip_code, trip_desc))
+        for t_code, t_desc in [("Trip A", "Yard to Yard"), ("Trip B", "Sunday Panbil - Wasco - Panbil"), ("Trip C", "Panbil - Destination - Panbil")]:
+            cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (?, ?)", (t_code, t_desc))
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
     if cursor.fetchone()[0] == 0:
@@ -608,50 +491,13 @@ init_db()
 def run_migrations():
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     cursor.execute("PRAGMA table_info(cars)")
-    car_cols = [col[1] for col in cursor.fetchall()]
-    if "color" not in car_cols:
+    if "color" not in [col[1] for col in cursor.fetchall()]:
         cursor.execute("ALTER TABLE cars ADD COLUMN color TEXT DEFAULT 'Black'")
-
-    cursor.execute("PRAGMA table_info(overtime_requests)")
-    ot_cols = [col[1] for col in cursor.fetchall()]
-    if "emp_name" not in ot_cols:
-        cursor.execute("ALTER TABLE overtime_requests ADD COLUMN emp_name TEXT")
-
-    cursor.execute("PRAGMA table_info(daily_transit)")
-    dt_cols = [col[1] for col in cursor.fetchall()]
-
-    if "transit_date" in dt_cols and "transit_date_start" not in dt_cols:
-        cursor.execute("ALTER TABLE daily_transit RENAME COLUMN transit_date TO transit_date_start")
-    
-    cursor.execute("PRAGMA table_info(daily_transit)")
-    dt_cols_updated = [col[1] for col in cursor.fetchall()]
-    if "transit_date_end" not in dt_cols_updated:
-        cursor.execute("ALTER TABLE daily_transit ADD COLUMN transit_date_end TEXT")
-        cursor.execute("UPDATE daily_transit SET transit_date_end = transit_date_start WHERE transit_date_end IS NULL")
-
-    new_dt_fields = {
-        "requested_by": "TEXT",
-        "etd_1": "TEXT",
-        "etd_2": "TEXT",
-        "location_from": "TEXT",
-        "location_to": "TEXT",
-        "daily": "TEXT DEFAULT 'No'",
-        "trip": "TEXT DEFAULT 'Trip A'"
-    }
-    for col_name, col_type in new_dt_fields.items():
-        if col_name not in dt_cols_updated:
-            cursor.execute(f"ALTER TABLE daily_transit ADD COLUMN {col_name} {col_type}")
-
-    cursor.execute("UPDATE daily_transit SET trip = 'Trip A' WHERE trip IS NULL OR trip = ''")
-
     conn.commit()
     conn.close()
 
 run_migrations()
-
-# Check and render modal status popup dialog if queued in state
 trigger_transaction_dialog()
 
 # ==============================================================================
@@ -701,36 +547,25 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.emp_name = ""
     st.rerun()
 
-tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "🛠️️ System Administration"]
-tab1, tab1_b, tab1_c, tab2, tab3 = st.tabs(tabs)
+tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "📢 Site News", "🛠️ System Administration"]
+tab1, tab1_b, tab1_c, tab2, tab_news, tab3 = st.tabs(tabs)
 
 # --- TAB 1: OVERTIME REQUESTS ---
 with tab1:
     st.header("Request Overtime & Logistics Tracking")
-    
     conn = get_db_connection()
-    holidays_df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
-    holiday_list = holidays_df['holiday_date'].tolist()
-    
-    users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
-    all_emp_names = users_df['emp_name'].tolist()
+    holiday_list = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)['holiday_date'].tolist()
+    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
     conn.close()
     
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
-
     if not all_emp_names:
         all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
-        
     logged_in_emp = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
 
     col1, col2 = st.columns(2)
     with col1:
-        selected_staff_members = st.multiselect(
-            "Select Staff Member(s) for Overtime", 
-            options=all_emp_names, 
-            default=[logged_in_emp]
-        )
-        
+        selected_staff_members = st.multiselect("Select Staff Member(s) for Overtime", options=all_emp_names, default=[logged_in_emp])
         ot_date = st.date_input("Select Target Date", value=date.today(), key="ot_date_picker")
         date_str = ot_date.strftime("%Y-%m-%d") if ot_date else ""
         
@@ -738,18 +573,10 @@ with tab1:
         is_holiday = date_str in holiday_list if date_str else False
         
         if is_sunday or is_holiday:
-            default_start = time(7, 0)
-            default_end = time(15, 0)
-            default_origin = "Panbil"
-            default_dest = "Yard-1 Office"
-            default_dep_time_str = "07:00"
+            default_start, default_end, default_origin, default_dest, default_dep_time_str = time(7, 0), time(15, 0), "Panbil", "Yard-1 Office", "07:00"
             st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
-            default_start = time(17, 30)
-            default_end = time(19, 0)
-            default_origin = "Yard-1 Office"
-            default_dest = "Panbil"
-            default_dep_time_str = "19:00"
+            default_start, default_end, default_origin, default_dest, default_dep_time_str = time(17, 30), time(19, 0), "Yard-1 Office", "Panbil", "19:00"
             st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
         
         start_time = st.time_input("OT Start Time (24-hr Military Time)", value=default_start)
@@ -768,26 +595,16 @@ with tab1:
     if st.button("Submit New Overtime Request"):
         if not ot_date or not date_str:
             set_transaction_dialog("Data Transaction Unsuccessful", "Target Date cannot be left blank.", "error")
-        elif start_time is None:
-            set_transaction_dialog("Data Transaction Unsuccessful", "OT Start Time cannot be left blank.", "error")
-        elif end_time is None:
-            set_transaction_dialog("Data Transaction Unsuccessful", "OT End Time cannot be left blank.", "error")
         elif not selected_staff_members:
             set_transaction_dialog("Data Transaction Unsuccessful", "Please select at least one staff member.", "error")
         else:
             try:
-                start_time_military = start_time.strftime("%H:%M")
-                end_time_military = end_time.strftime("%H:%M")
-                
                 conn = get_db_connection()
                 for staff in selected_staff_members:
                     conn.execute('''
-                        INSERT INTO overtime_requests (username, emp_name, ot_date, start_time, end_time, needs_transport, 
-                        origin, destination, departure_time, return_time)
+                        INSERT INTO overtime_requests (username, emp_name, ot_date, start_time, end_time, needs_transport, origin, destination, departure_time, return_time)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (st.session_state.username, staff, date_str, start_time_military, end_time_military,
-                          needs_transport, origin, destination, dep_time_str, ret_time_str))
-                
+                    ''', (st.session_state.username, staff, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), needs_transport, origin, destination, dep_time_str, ret_time_str))
                 conn.commit()
                 conn.close()
                 set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s).", "success")
@@ -805,19 +622,11 @@ with tab1:
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
-        
-        ot_excel_bytes = export_df_to_excel(ot_df, sheet_name="Overtime_Requests")
-        st.download_button(
-            label="📥 Export Overtime Log to Excel (.xlsx)",
-            data=ot_excel_bytes,
-            file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 Export Overtime Log to Excel (.xlsx)", data=export_df_to_excel(ot_df, sheet_name="Overtime_Requests"), file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
 with tab1_b:
     st.header("👥 Transit Groups & Passengers Management")
-    
     conn = get_db_connection()
     drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
     cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
@@ -826,63 +635,47 @@ with tab1_b:
     conn.close()
 
     col1, col2 = st.columns(2)
-    
     with col1:
         st.subheader("1. Create Transit Group")
         selected_car_group = st.selectbox("Group Name (Select from Cars)", cars_list if cars_list else ["No cars available"], key="g_car_select")
         selected_driver = st.selectbox("Assign Driver (from Fleet Drivers)", drivers_list if drivers_list else ["No drivers available"])
-        
         raw_etd1_grp = st.text_input("ETD 1 (From) [e.g. 0545 or 05:45]", value="05:45", key="grp_etd1_in")
         raw_etd2_grp = st.text_input("ETD 2 (To) [e.g. 1730 or 17:30]", value="17:30", key="grp_etd2_in")
         
         if st.button("Save Transit Group"):
-            etd1_grp_formatted = format_military_time(raw_etd1_grp)
-            etd2_grp_formatted = format_military_time(raw_etd2_grp)
-            
+            etd1_grp_formatted, etd2_grp_formatted = format_military_time(raw_etd1_grp), format_military_time(raw_etd2_grp)
             if not etd1_grp_formatted or not etd2_grp_formatted:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid time format. Please enter valid 24-hr military time (e.g. 0545 or 1730).", "error")
-            elif selected_car_group != "No cars available" and selected_driver != "No drivers available":
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid time format.", "error")
+            else:
                 try:
                     conn = get_db_connection()
-                    conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)",
-                                 (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
+                    conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)", (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
                     conn.commit()
                     conn.close()
-                    set_transaction_dialog("Data Transaction Successful", f"Group '{selected_car_group}' has been created successfully.", "success")
-                except sqlite3.IntegrityError:
-                    set_transaction_dialog("Data Transaction Unsuccessful", "A group for this car already exists in the system.", "error")
+                    set_transaction_dialog("Data Transaction Successful", f"Group '{selected_car_group}' created.", "success")
                 except Exception as e:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save group: {str(e)}", "error")
-            else:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Ensure valid Car and Driver options are selected.", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
 
     with col2:
         st.subheader("2. Assign Passengers to Group")
         if groups_list and employees_list:
-            selected_group_for_p = st.selectbox("Select Group Name (from Transit Groups)", groups_list, key="p_group_select")
-            selected_passengers = st.multiselect("Select Passenger(s) (from User Employee Names)", employees_list)
-            
+            selected_group_for_p = st.selectbox("Select Group Name", groups_list, key="p_group_select")
+            selected_passengers = st.multiselect("Select Passenger(s)", employees_list)
             if st.button("Assign Passengers to Group"):
                 if selected_passengers:
                     try:
                         conn = get_db_connection()
-                        for passenger in selected_passengers:
-                            conn.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (?, ?)",
-                                         (selected_group_for_p, passenger))
+                        for p in selected_passengers:
+                            conn.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (?, ?)", (selected_group_for_p, p))
                         conn.commit()
                         conn.close()
-                        set_transaction_dialog("Data Transaction Successful", "Passenger assignments were saved successfully.", "success")
+                        set_transaction_dialog("Data Transaction Successful", "Passengers assigned.", "success")
                     except Exception as e:
-                        set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to assign passengers: {str(e)}", "error")
-                else:
-                    set_transaction_dialog("Data Transaction Unsuccessful", "Please select at least one passenger.", "error")
+                        set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
                 st.rerun()
-        else:
-            st.info("Ensure Transit Groups are created and Users have 'emp_name' populated.")
 
     st.markdown("---")
-    
     title_col, eff_date_col = st.columns([2, 1])
     with title_col:
         st.subheader("📋 Configured Groups & Assigned Passengers")
@@ -905,195 +698,93 @@ with tab1_b:
     
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
-        
-        excel_bytes = export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str)
-        pdf_bytes = export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str) if HAS_REPORTLAB else None
-
         col_ex, col_pdf = st.columns(2)
-        
         with col_ex:
-            st.download_button(
-                label="📥 Export to Excel (.xlsx)",
-                data=excel_bytes,
-                file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
+            st.download_button("📥 Export to Excel (.xlsx)", data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str), file_name=f"Transit_Arrangement_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         with col_pdf:
-            if HAS_REPORTLAB and pdf_bytes:
-                st.download_button(
-                    label="📄 Export to PDF (.pdf)",
-                    data=pdf_bytes,
-                    file_name=f"Daily_Transportation_Arrangement_TUCC_{datetime.today().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-            else:
-                st.info("📄 PDF Export: Add `reportlab` to `requirements.txt` to enable.")
+            if HAS_REPORTLAB:
+                st.download_button("📄 Export to PDF (.pdf)", data=export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str), file_name=f"Transit_Arrangement_{datetime.today().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
     st.header("📅 Daily Transit Dispatch Schedule & Route Setting")
-    
     conn = get_db_connection()
-    users_df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
-    all_emp_names = users_df['emp_name'].tolist()
-    
+    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
     cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
     trips_db_df = pd.read_sql_query("SELECT trip, trip_name FROM trips ORDER BY trip", conn)
-    
-    origins_df = pd.read_sql_query("SELECT DISTINCT location_from FROM daily_transit WHERE location_from IS NOT NULL AND location_from != ''", conn)
-    dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL AND location_to != ''", conn)
+    origins_df = pd.read_sql_query("SELECT DISTINCT location_from FROM daily_transit WHERE location_from IS NOT NULL", conn)
+    dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL", conn)
     conn.close()
     
-    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport", "Harbour Bay Ferry Terminal"]
-    
+    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport"]
     origin_list = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
     dest_list = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
-
     render_datalist_options("origin_list_dl", origin_list)
     render_datalist_options("dest_list_dl", dest_list)
 
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
     if not all_emp_names:
         all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
-    
     default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
     is_admin = st.session_state.get("role", "") == "Admin"
 
-    trip_option_labels = []
-    trip_code_map = {}
-    if not trips_db_df.empty:
-        for _, t_row in trips_db_df.iterrows():
-            t_code = str(t_row['trip']).strip()
-            t_desc = str(t_row['trip_name']).strip()
-            lbl = f"{t_code} ({t_desc})"
-            trip_option_labels.append(lbl)
-            trip_code_map[lbl] = t_code
-    else:
-        trip_option_labels = ["Trip A (Yard to Yard)"]
-        trip_code_map = {"Trip A (Yard to Yard)": "Trip A"}
+    trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
+    trip_code_map = {lbl: lbl.split(" ")[0] for lbl in trip_option_labels}
 
-    car_option_labels = ["TBA - To Be Assigned"]
+    car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows()]
     car_label_to_group = {"TBA - To Be Assigned": "TBA"}
-    car_group_to_label = {"TBA": "TBA - To Be Assigned"}
-    
-    if not cars_db_df.empty:
-        for _, c_row in cars_db_df.iterrows():
-            c_name = str(c_row['car_name']).strip()
-            p_num = str(c_row['plate_number'] or 'N/A').strip()
-            v_model = str(c_row['vehicle'] or '').strip()
-            
-            label_str = f"{c_name} - {p_num}" + (f" ({v_model})" if v_model else "")
-            car_option_labels.append(label_str)
-            car_label_to_group[label_str] = c_name
-            car_group_to_label[c_name] = c_name
+    for _, r in cars_db_df.iterrows():
+        lbl = f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "")
+        car_label_to_group[lbl] = r['car_name']
 
     if "dispatch_reset_counter" not in st.session_state:
         st.session_state.dispatch_reset_counter = 0
-        
     reset_id = st.session_state.dispatch_reset_counter
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Configure Transit Request")
-        
         requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by), key=f"dt_req_{reset_id}")
-        
         selected_trip_label = st.selectbox("Trip Category", options=trip_option_labels, index=0, key=f"dt_trip_{reset_id}")
         selected_trip_code = trip_code_map.get(selected_trip_label, "Trip A")
 
-        if is_admin:
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"], index=0, key=f"dt_daily_{reset_id}")
-        else:
-            is_daily = st.selectbox("Daily / Recurring Journey?", options=["No"], index=0, disabled=True, help="Recurring journey requests require Administrator permissions.", key=f"dt_daily_{reset_id}")
-
-        min_date = date.today()
-        max_date = min_date + timedelta(days=30)
-        
-        dispatch_date_start = st.date_input("Select Transit Start Date", value=min_date, min_value=min_date, max_value=max_date, key=f"reg_dt_start_{reset_id}")
-        disp_date_start_str = dispatch_date_start.strftime("%Y-%m-%d") if dispatch_date_start else ""
+        is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"] if is_admin else ["No"], index=0, disabled=not is_admin, key=f"dt_daily_{reset_id}")
+        dispatch_date_start = st.date_input("Select Transit Start Date", value=date.today(), min_value=date.today(), key=f"reg_dt_start_{reset_id}")
         
         if is_daily == "Yes":
-            dispatch_date_end = st.date_input(
-                "Select Transit End Date", 
-                value=dispatch_date_start + timedelta(days=1), 
-                min_value=dispatch_date_start + timedelta(days=1),
-                max_value=max_date + timedelta(days=180),
-                key=f"reg_dt_end_{reset_id}"
-            )
-            disp_date_end_str = dispatch_date_end.strftime("%Y-%m-%d") if dispatch_date_end else ""
-            st.caption("ℹ️ **Recurring Daily Journey**: Start Date must be earlier than End Date.")
+            dispatch_date_end = st.date_input("Select Transit End Date", value=dispatch_date_start + timedelta(days=1), min_value=dispatch_date_start + timedelta(days=1), key=f"reg_dt_end_{reset_id}")
         else:
             dispatch_date_end = dispatch_date_start
-            disp_date_end_str = disp_date_start_str
-            st.caption("ℹ️ Single journey request: **Transit End Date automatically set to Start Date**.")
-        
-        default_origin_text = "" if reset_id > 0 else "Yard-1 Office"
-        default_dest_text = "" if reset_id > 0 else "Yard-3 Office"
 
-        location_from = st.text_input(
-            "Origin Location (Type any custom text or select suggestion)", 
-            value=default_origin_text,
-            placeholder="[origin_list_dl] Type origin location...",
-            key=f"txt_origin_{reset_id}"
-        )
-
-        location_to = st.text_input(
-            "Target Location (Type any custom text or select suggestion)", 
-            value=default_dest_text,
-            placeholder="[dest_list_dl] Type target location...",
-            key=f"txt_dest_{reset_id}"
-        )
+        location_from = st.text_input("Origin Location", value="Yard-1 Office" if reset_id == 0 else "", placeholder="[origin_list_dl] Type origin...", key=f"txt_origin_{reset_id}")
+        location_to = st.text_input("Target Location", value="Yard-3 Office" if reset_id == 0 else "", placeholder="[dest_list_dl] Type target...", key=f"txt_dest_{reset_id}")
 
     with col2:
         st.subheader("Schedule & Vehicle Allocation")
-        
-        default_etd1_val = "" if reset_id > 0 else "08:00"
-        default_etd2_val = "" if reset_id > 0 else "17:00"
-        
-        raw_etd1 = st.text_input("ETD 1 (Start Time) [e.g. 0800 or 08:00]", value=default_etd1_val, placeholder="0800 or 08:00", key=f"etd1_{reset_id}")
-        raw_etd2 = st.text_input("ETD 2 (Return Time) [e.g. 1700 or 17:00]", value=default_etd2_val, placeholder="1700 or 17:00", key=f"etd2_{reset_id}")
-        
-        if is_admin:
-            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=car_option_labels, index=0, key=f"car_{reset_id}")
-            selected_group = car_label_to_group.get(selected_car_label, "TBA")
-        else:
-            selected_car_label = st.selectbox("Assigned Group / Car Name (With Plate Number)", options=["TBA - To Be Assigned"], index=0, disabled=True, help="Group name assignment is managed by Administrator.", key=f"car_{reset_id}")
-            selected_group = "TBA"
+        raw_etd1 = st.text_input("ETD 1 (Start Time)", value="08:00" if reset_id == 0 else "", placeholder="0800", key=f"etd1_{reset_id}")
+        raw_etd2 = st.text_input("ETD 2 (Return Time)", value="17:00" if reset_id == 0 else "", placeholder="1700", key=f"etd2_{reset_id}")
+        selected_car_label = st.selectbox("Assigned Group / Car Name", options=car_option_labels, index=0, disabled=not is_admin, key=f"car_{reset_id}")
+        selected_group = car_label_to_group.get(selected_car_label, "TBA") if is_admin else "TBA"
 
     b_col1, b_col2 = st.columns([1, 4])
-    
     with b_col1:
         if st.button("Submit Transit Request", type="primary"):
-            formatted_etd1 = format_military_time(raw_etd1)
-            formatted_etd2 = format_military_time(raw_etd2)
-            
-            if not formatted_etd1:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 1 Time Format (e.g., 0800 or 08:00).", "error")
-            elif not formatted_etd2:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 2 Time Format (e.g., 1700 or 17:00).", "error")
-            elif not disp_date_start_str or not disp_date_end_str:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Transit Start and End Dates cannot be left blank.", "error")
-            elif is_daily == "Yes" and dispatch_date_start >= dispatch_date_end:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Start Date must be strictly earlier than End Date.", "error")
-            elif not location_from or not location_to:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Origin and Target Locations cannot be left blank.", "error")
+            fmt_etd1, fmt_etd2 = format_military_time(raw_etd1), format_military_time(raw_etd2)
+            if not fmt_etd1 or not fmt_etd2:
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD Time format.", "error")
             else:
                 try:
                     conn = get_db_connection()
                     conn.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (disp_date_start_str, disp_date_end_str, selected_group, requested_by, formatted_etd1, formatted_etd2, str(location_from).strip(), str(location_to).strip(), is_daily, selected_trip_code))
+                    ''', (dispatch_date_start.strftime("%Y-%m-%d"), dispatch_date_end.strftime("%Y-%m-%d"), selected_group, requested_by, fmt_etd1, fmt_etd2, location_from.strip(), location_to.strip(), is_daily, selected_trip_code))
                     conn.commit()
                     conn.close()
-                    set_transaction_dialog("Data Transaction Successful", f"Transit dispatch request ({selected_trip_code}) successfully logged for {requested_by}.", "success")
+                    set_transaction_dialog("Data Transaction Successful", "Transit dispatch logged successfully.", "success")
                 except Exception as e:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Database error: {str(e)}", "error")
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Error: {str(e)}", "error")
             st.rerun()
-
     with b_col2:
         if st.button("🧹 Clear Form Inputs"):
             st.session_state.dispatch_reset_counter += 1
@@ -1101,290 +792,160 @@ with tab1_c:
 
     st.markdown("---")
     st.subheader("📊 Scheduled Transit Dispatches Log")
-    
     conn = get_db_connection()
     daily_raw_df = pd.read_sql_query('''
         SELECT dt.id, dt.transit_date_start, dt.transit_date_end, dt.trip, dt.requested_by, 
-               dt.group_name, c.plate_number, c.vehicle,
-               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
-        FROM daily_transit dt
-        LEFT JOIN cars c ON dt.group_name = c.car_name
+               dt.group_name, c.plate_number, c.vehicle, dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
+        FROM daily_transit dt LEFT JOIN cars c ON dt.group_name = c.car_name
         ORDER BY dt.transit_date_start DESC, dt.id DESC
     ''', conn)
     conn.close()
     
     if not daily_raw_df.empty:
         display_df = daily_raw_df.copy()
-        
-        display_df['Group / Car'] = display_df.apply(
-            lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'],
-            axis=1
-        )
-        
-        export_df = display_df[[
-            "id", "transit_date_start", "transit_date_end", "trip", "requested_by", 
-            "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"
-        ]].rename(columns={
-            "id": "Dispatch ID",
-            "transit_date_start": "Transit Date Start",
-            "transit_date_end": "Transit Date End",
-            "trip": "Trip Category",
-            "requested_by": "Requested By",
-            "location_from": "Origin (From)",
-            "location_to": "Destination (To)",
-            "etd_1": "ETD Start",
-            "etd_2": "ETD Return",
-            "daily": "Daily Recurring"
-        })
-        
+        display_df['Group / Car'] = display_df.apply(lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'], axis=1)
+        export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
         st.dataframe(export_df, use_container_width=True)
-        
-        dispatch_excel_bytes = export_df_to_excel(export_df, sheet_name="Daily_Dispatches")
-        st.download_button(
-            label="📥 Export Daily Dispatch Log to Excel (.xlsx)",
-            data=dispatch_excel_bytes,
-            file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        # --- ADMIN MANAGEMENT & SEARCH FILTER CONSOLE ---
-        if is_admin:
-            st.markdown("---")
-            st.subheader("🛠️ Admin Management: Edit / Delete Dispatch Records")
-            
-            with st.expander("🔍 Search & Filter Dispatch Records", expanded=True):
-                sf_col1, sf_col2, sf_col3 = st.columns([2, 2, 2])
-                
-                with sf_col1:
-                    search_query = st.text_input("Search (Requester, Trip, Origin, Dest, Car, Plate)", value="", key="search_dispatch_txt")
-                
-                with sf_col2:
-                    filter_car_label = st.selectbox("Filter by Group / Car", options=["All"] + car_option_labels, index=0, key="filter_grp_sel")
-                    
-                with sf_col3:
-                    filter_date_range = st.date_input(
-                        "Filter by Date Range", 
-                        value=(date.today() - timedelta(days=7), date.today() + timedelta(days=30)),
-                        key="filter_dt_range"
-                    )
-
-            filtered_df = daily_raw_df.copy()
-            
-            if search_query:
-                sq = search_query.lower()
-                filtered_df = filtered_df[
-                    filtered_df['requested_by'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['trip'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['location_from'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['location_to'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['group_name'].astype(str).str.lower().str.contains(sq) |
-                    filtered_df['plate_number'].astype(str).str.lower().str.contains(sq)
-                ]
-                
-            if filter_car_label != "All":
-                target_grp_code = car_label_to_group.get(filter_car_label, "TBA")
-                filtered_df = filtered_df[filtered_df['group_name'] == target_grp_code]
-                
-            if isinstance(filter_date_range, tuple) and len(filter_date_range) == 2:
-                start_f, end_f = filter_date_range
-                filtered_df['dt_start_obj'] = pd.to_datetime(filtered_df['transit_date_start']).dt.date
-                filtered_df = filtered_df[(filtered_df['dt_start_obj'] >= start_f) & (filtered_df['dt_start_obj'] <= end_f)]
-
-            st.caption(f"Showing **{len(filtered_df)}** of **{len(daily_raw_df)}** recorded dispatches.")
-            
-            if not filtered_df.empty:
-                for idx, row in filtered_df.iterrows():
-                    rec_id = row['id']
-                    grp_disp = f"{row['group_name']} - {row['plate_number']}" if pd.notna(row['plate_number']) and row['group_name'] != 'TBA' else row['group_name']
-                    rec_title = f"ID #{rec_id} | [{row['trip'] or 'Trip A'}] | {row['transit_date_start']} ➡️ {row['transit_date_end']} | {row['requested_by']} | {row['location_from']} ➡️ {row['location_to']} ({grp_disp})"
-                    
-                    with st.expander(f"✏️️ Manage Record: {rec_title}"):
-                        e_col1, e_col2 = st.columns(2)
-                        
-                        with e_col1:
-                            try:
-                                curr_start_obj = datetime.strptime(row['transit_date_start'], "%Y-%m-%d").date()
-                            except (ValueError, TypeError):
-                                curr_start_obj = date.today()
-
-                            try:
-                                curr_end_obj = datetime.strptime(row['transit_date_end'], "%Y-%m-%d").date()
-                            except (ValueError, TypeError):
-                                curr_end_obj = curr_start_obj
-                                
-                            edit_req_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(row['requested_by']) if row['requested_by'] in all_emp_names else 0, key=f"e_req_{rec_id}")
-                            
-                            curr_trip_code = row['trip'] if row['trip'] in trip_code_map.values() else "Trip A"
-                            edit_trip_label = [lbl for lbl, code in trip_code_map.items() if code == curr_trip_code]
-                            edit_trip_idx = trip_option_labels.index(edit_trip_label[0]) if edit_trip_label else 0
-                            
-                            edit_trip_sel = st.selectbox("Trip Category", options=trip_option_labels, index=edit_trip_idx, key=f"e_trip_{rec_id}")
-                            edit_trip_code = trip_code_map.get(edit_trip_sel, "Trip A")
-
-                            edit_daily = st.selectbox("Daily Recurring?", options=["No", "Yes"], index=["No", "Yes"].index(row['daily'] if row['daily'] in ["Yes", "No"] else "No"), key=f"e_daily_{rec_id}")
-                            
-                            edit_dt_start = st.date_input("Transit Date Start", value=curr_start_obj, key=f"e_dt_start_{rec_id}")
-                            
-                            if edit_daily == "Yes":
-                                edit_dt_end = st.date_input("Transit Date End", value=max(curr_end_obj, edit_dt_start + timedelta(days=1)), min_value=edit_dt_start + timedelta(days=1), key=f"e_dt_end_{rec_id}")
-                            else:
-                                edit_dt_end = edit_dt_start
-                                st.caption("ℹ️️ Non-recurring: Date End automatically set to Date Start.")
-
-                            edit_loc_from = st.text_input("Origin Location", value=row['location_from'] or "", placeholder="[origin_list_dl]", key=f"e_loc_from_{rec_id}")
-                            edit_loc_to = st.text_input("Target Location", value=row['location_to'] or "", placeholder="[dest_list_dl]", key=f"e_loc_to_{rec_id}")
-
-                        with e_col2:
-                            edit_raw_etd1 = st.text_input("ETD 1 (Start Time)", value=row['etd_1'] or "08:00", key=f"e_etd1_{rec_id}")
-                            edit_raw_etd2 = st.text_input("ETD 2 (Return Time)", value=row['etd_2'] or "17:00", key=f"e_etd2_{rec_id}")
-                            
-                            curr_grp_code = row['group_name'] if row['group_name'] in car_group_to_label else "TBA"
-                            curr_car_label = car_group_to_label.get(curr_grp_code, "TBA - To Be Assigned")
-                            
-                            edit_car_label = st.selectbox("Group / Car Name (With Plate Number)", options=car_option_labels, index=car_option_labels.index(curr_car_label) if curr_car_label in car_option_labels else 0, key=f"e_grp_{rec_id}")
-                            edit_grp = car_label_to_group.get(edit_car_label, "TBA")
-
-                        btn_col1, btn_col2 = st.columns([1, 4])
-                        
-                        with btn_col1:
-                            if st.button("💾 Save Changes", key=f"btn_save_{rec_id}"):
-                                edit_fmt_etd1 = format_military_time(edit_raw_etd1)
-                                edit_fmt_etd2 = format_military_time(edit_raw_etd2)
-                                
-                                if not edit_fmt_etd1:
-                                    set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 1 Time Format.", "error")
-                                elif not edit_fmt_etd2:
-                                    set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD 2 Time Format.", "error")
-                                else:
-                                    try:
-                                        conn = get_db_connection()
-                                        conn.execute('''
-                                            UPDATE daily_transit
-                                            SET transit_date_start=?, transit_date_end=?, group_name=?, requested_by=?, etd_1=?, etd_2=?, location_from=?, location_to=?, daily=?, trip=?
-                                            WHERE id=?
-                                        ''', (edit_dt_start.strftime("%Y-%m-%d"), edit_dt_end.strftime("%Y-%m-%d"), edit_grp, edit_req_by, edit_fmt_etd1, edit_fmt_etd2, str(edit_loc_from).strip(), str(edit_loc_to).strip(), edit_daily, edit_trip_code, rec_id))
-                                        conn.commit()
-                                        conn.close()
-                                        set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been updated.", "success")
-                                    except Exception as e:
-                                        set_transaction_dialog("Data Transaction Unsuccessful", f"Update error: {str(e)}", "error")
-                                st.rerun()
-
-                        with btn_col2:
-                            if st.button("🗑️ Delete Record", key=f"btn_del_{rec_id}", type="primary"):
-                                try:
-                                    conn = get_db_connection()
-                                    conn.execute("DELETE FROM daily_transit WHERE id=?", (rec_id,))
-                                    conn.commit()
-                                    conn.close()
-                                    set_transaction_dialog("Data Transaction Successful", f"Dispatch Record ID #{rec_id} has been permanently deleted.", "success")
-                                except Exception as e:
-                                    set_transaction_dialog("Data Transaction Unsuccessful", f"Deletion error: {str(e)}", "error")
-                                st.rerun()
-            else:
-                st.info("No dispatch records match your search filter criteria.")
-    else:
-        st.info("No transit dispatches scheduled yet.")
+        st.download_button("📥 Export Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(export_df, sheet_name="Daily_Dispatches"), file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
 with tab2:
     st.header("Meeting Space Reservations Desk")
-    
     conn = get_db_connection()
     rooms = conn.execute("SELECT * FROM meeting_rooms").fetchall()
     conn.close()
     
-    if not rooms:
-        st.warning("No physical boardrooms are registered yet.")
-    else:
+    if rooms:
         room_options = {f"{r['room_name']} (Room {r['room_number']} - Capacity: {r['capacity']})": r['room_number'] for r in rooms}
-        selected_room_label = st.selectbox("Choose Target Room Venue", list(room_options.keys()))
-        selected_room_num = room_options[selected_room_label]
+        selected_room_num = room_options[st.selectbox("Choose Target Room Venue", list(room_options.keys()))]
         
         col1, col2 = st.columns(2)
         with col1:
-            book_date = st.date_input("Reservation Date", value=date.today(), key="bk_date")
-            b_start = st.time_input("Reservation Start Time", value=time(9, 0), key="bk_start")
-            b_end = st.time_input("Reservation End Time", value=time(10, 0), key="bk_end")
-        
+            book_date = st.date_input("Reservation Date", value=date.today())
+            b_start, b_end = st.time_input("Start Time", value=time(9, 0)), st.time_input("End Time", value=time(10, 0))
         with col2:
-            recurrence = st.selectbox("Recurrence Schedule Pattern", ["None", "Daily", "Weekly", "Monthly"])
-            max_rec_end = date.today() + timedelta(days=180) 
-            recurrence_end = st.date_input("Recurrence End Target (Max 6 Months)", value=book_date + timedelta(days=7), key="rec_end_picker")
-            
-            if recurrence_end > max_rec_end:
-                st.error("⚠️ Max 6 months recurrence limit exceeded.")
-                st.stop()
+            recurrence = st.selectbox("Recurrence Pattern", ["None", "Daily", "Weekly", "Monthly"])
+            recurrence_end = st.date_input("Recurrence End Target", value=book_date + timedelta(days=7))
 
         if st.button("Confirm Room Block Assignment"):
             target_dates = [book_date]
             if recurrence != "None":
-                current_date = book_date
+                curr = book_date
                 while True:
-                    if recurrence == "Daily":
-                        current_date += timedelta(days=1)
-                    elif recurrence == "Weekly":
-                        current_date += timedelta(weeks=1)
-                    elif recurrence == "Monthly":
-                        current_date += timedelta(days=30)
-                    
-                    if current_date <= recurrence_end:
-                        target_dates.append(current_date)
+                    curr += timedelta(days=1 if recurrence == "Daily" else 7 if recurrence == "Weekly" else 30)
+                    if curr <= recurrence_end:
+                        target_dates.append(curr)
                     else:
                         break
             
-            conflict_detected = False
             conn = get_db_connection()
-            
-            for t_date in target_dates:
-                t_date_str = t_date.strftime("%Y-%m-%d")
-                conflicts = conn.execute('''
-                    SELECT * FROM room_bookings 
-                    WHERE room_number = ? 
-                    AND booking_date = ? 
-                    AND NOT (start_time >= ? OR end_time <= ?)
-                ''', (selected_room_num, t_date_str, b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchall()
-                
-                if conflicts:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Schedule Collision on {t_date_str}!", "error")
-                    conflict_detected = True
+            conflict = False
+            for td in target_dates:
+                if conn.execute("SELECT * FROM room_bookings WHERE room_number = ? AND booking_date = ? AND NOT (start_time >= ? OR end_time <= ?)", (selected_room_num, td.strftime("%Y-%m-%d"), b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchone():
+                    conflict = True
                     break
             
-            if not conflict_detected:
-                try:
-                    for t_date in target_dates:
-                        conn.execute('''
-                            INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        ''', (selected_room_num, st.session_state.username, t_date.strftime("%Y-%m-%d"), 
-                              b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
-                    
-                    conn.commit()
-                    set_transaction_dialog("Data Transaction Successful", f"Room successfully reserved across {len(target_dates)} scheduled interval(s).", "success")
-                except Exception as e:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Booking error: {str(e)}", "error")
+            if conflict:
+                set_transaction_dialog("Data Transaction Unsuccessful", "Schedule conflict detected.", "error")
+            else:
+                for td in target_dates:
+                    conn.execute("INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?)", (selected_room_num, st.session_state.username, td.strftime("%Y-%m-%d"), b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
+                conn.commit()
+                set_transaction_dialog("Data Transaction Successful", f"Room reserved for {len(target_dates)} date(s).", "success")
             conn.close()
             st.rerun()
 
     st.subheader("📊 Master Room Allocation Schedules")
     conn = get_db_connection()
-    bookings_df = pd.read_sql_query('''
-        SELECT b.id, r.room_name, b.room_number, b.booked_by, b.booking_date, b.start_time, b.end_time, b.is_recurring 
-        FROM room_bookings b 
-        JOIN meeting_rooms r ON b.room_number = r.room_number
-    ''', conn)
+    bookings_df = pd.read_sql_query("SELECT b.id, r.room_name, b.room_number, b.booked_by, b.booking_date, b.start_time, b.end_time, b.is_recurring FROM room_bookings b JOIN meeting_rooms r ON b.room_number = r.room_number", conn)
     conn.close()
-    
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
-        
-        rooms_excel_bytes = export_df_to_excel(bookings_df, sheet_name="Room_Bookings")
-        st.download_button(
-            label="📥 Export Room Bookings to Excel (.xlsx)",
-            data=rooms_excel_bytes,
-            file_name=f"Room_Bookings_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+
+# --- TAB: SITE NEWS ---
+with tab_news:
+    st.header("📢 TUCC PJ Batam Site News & Announcements")
+    is_admin = st.session_state.get("role", "") == "Admin"
+    
+    if is_admin:
+        with st.expander("📤 Upload New Site News Bulletin (Admin Only)", expanded=False):
+            with st.form("news_upload_form", clear_on_submit=True):
+                news_title = st.text_input("News Title / Description")
+                uploaded_news_file = st.file_uploader("Upload Bulletin File (PDF or PNG only)", type=["pdf", "png"])
+                news_submitted = st.form_submit_button("Publish Bulletin")
+                
+                if news_submitted:
+                    if not news_title.strip():
+                        set_transaction_dialog("Upload Unsuccessful", "Please provide a title for the news bulletin.", "error")
+                    elif uploaded_news_file is None:
+                        set_transaction_dialog("Upload Unsuccessful", "Please select a file to upload.", "error")
+                    else:
+                        file_ext = uploaded_news_file.name.split('.')[-1].lower()
+                        if file_ext not in ["pdf", "png"]:
+                            set_transaction_dialog("Upload Unsuccessful", "Only PDF and PNG files are allowed.", "error")
+                        else:
+                            try:
+                                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                safe_filename = f"{timestamp_str}_{uploaded_news_file.name}"
+                                file_path = os.path.join(NEWS_DIR, safe_filename)
+                                
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_news_file.getbuffer())
+                                    
+                                conn = get_db_connection()
+                                conn.execute('''
+                                    INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (news_title.strip(), uploaded_news_file.name, file_path, file_ext, st.session_state.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                                conn.commit()
+                                conn.close()
+                                
+                                set_transaction_dialog("Upload Successful", f"Bulletin '{news_title}' published successfully.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Upload Unsuccessful", f"Failed to save file: {str(e)}", "error")
+                            st.rerun()
+
+    st.subheader("📋 Published Site News Bulletins (Latest to Oldest)")
+    conn = get_db_connection()
+    news_df = pd.read_sql_query("SELECT * FROM site_news ORDER BY id DESC", conn)
+    conn.close()
+    
+    if not news_df.empty:
+        for _, row in news_df.iterrows():
+            news_id, title, filename, file_path, file_type, uploaded_by, upload_date = row['id'], row['title'], row['filename'], row['file_path'], row['file_type'], row['uploaded_by'], row['upload_date']
+            
+            with st.container(border=True):
+                col_info, col_action = st.columns([3, 1])
+                with col_info:
+                    st.markdown(f"### 📌 {title}")
+                    st.caption(f"📅 Published: **{upload_date}** | 👤 By: **{uploaded_by}** | 📄 File: `{filename}`")
+                with col_action:
+                    if os.path.exists(file_path):
+                        with open(file_path, "rb") as f:
+                            file_bytes = f.read()
+                        st.download_button(
+                            label=f"📥 View / Download ({file_type.upper()})",
+                            data=file_bytes, file_name=filename,
+                            mime="application/pdf" if file_type == "pdf" else "image/png",
+                            key=f"dl_news_{news_id}"
+                        )
+                    else:
+                        st.error("File missing.")
+                if is_admin:
+                    if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
+                        try:
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM site_news WHERE id = ?", (news_id,))
+                            conn.commit()
+                            conn.close()
+                            set_transaction_dialog("Deletion Successful", "Bulletin deleted.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                        st.rerun()
+    else:
+        st.info("No site news bulletins published yet.")
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
@@ -1393,44 +954,27 @@ with tab3:
     else:
         st.header("Admin Control Dashboard Engine")
         
-        # --- BACKUP & DISASTER RECOVERY MANAGEMENT ---
         st.markdown("---")
         st.subheader("💾 Database Backups & Disaster Recovery")
-        st.caption("ℹ️ Automated backups run daily at **11:30 AM** and **5:30 PM**.")
-        
         b_col1, b_col2 = st.columns(2)
-        
         with b_col1:
             if st.button("🔄 Trigger Manual Backup Now"):
                 perform_automated_backup()
                 set_transaction_dialog("Data Transaction Successful", "Manual backup snapshot created successfully.", "success")
                 st.rerun()
-                
         with b_col2:
-            if os.path.exists(BACKUP_DIR):
-                backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True)
-            else:
-                backup_files = []
-                
+            backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True) if os.path.exists(BACKUP_DIR) else []
             if backup_files:
                 selected_backup = st.selectbox("Select Backup Snapshot", backup_files)
                 if selected_backup:
-                    file_path = os.path.join(BACKUP_DIR, selected_backup)
-                    with open(file_path, "rb") as f:
-                        st.download_button(
-                            label=f"📥 Download Selected Backup ({selected_backup})",
-                            data=f,
-                            file_name=selected_backup,
-                            mime="application/octet-stream"
-                        )
+                    with open(os.path.join(BACKUP_DIR, selected_backup), "rb") as f:
+                        st.download_button(f"📥 Download Selected Backup ({selected_backup})", data=f, file_name=selected_backup, mime="application/octet-stream")
             else:
                 st.info("No backup snapshots found yet.")
 
-        # --- EXCEL DATA IMPORT SECTION ---
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
-        
-        import_table = st.selectbox("Select Database Table to Import Data Into", ["users", "holidays", "trips", "fleet_drivers", "cars", "transit_passengers"], key="import_tbl_sel")
+        import_table = st.selectbox("Select Database Table", ["users", "holidays", "trips", "fleet_drivers", "cars", "transit_passengers", "site_news"], key="import_tbl_sel")
         
         table_schemas = {
             "users": ["username", "password", "role", "email_recipients", "emp_name"],
@@ -1438,127 +982,76 @@ with tab3:
             "trips": ["trip", "trip_name"],
             "fleet_drivers": ["driver_name", "driver_mobile"],
             "cars": ["car_name", "plate_number", "vehicle", "color"],
-            "transit_passengers": ["group_name", "passengers"]
+            "transit_passengers": ["group_name", "passengers"],
+            "site_news": ["title", "filename", "file_path", "file_type", "uploaded_by", "upload_date"]
         }
         
         req_cols = table_schemas[import_table]
-        st.caption(f"ℹ️ **Required Excel (.xlsx) Headers for `{import_table}`:** `{', '.join(req_cols)}`")
-        
         buffer_template = io.BytesIO()
-        template_df = pd.DataFrame(columns=req_cols)
-        with pd.ExcelWriter(buffer_template, engine='openpyxl') as writer:
-            template_df.to_excel(writer, index=False, sheet_name=f"{import_table}_Template")
-        excel_template_bytes = buffer_template.getvalue()
+        pd.DataFrame(columns=req_cols).to_excel(buffer_template, index=False, sheet_name=f"{import_table}_Template")
+        st.download_button(f"📥 Download Excel Template for {import_table}", data=buffer_template.getvalue(), file_name=f"{import_table}_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         
-        st.download_button(
-            label=f"📥 Download Excel (.xlsx) Template for {import_table}",
-            data=excel_template_bytes,
-            file_name=f"{import_table}_import_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        
-        uploaded_file = st.file_uploader(f"Upload Excel file (.xlsx) for '{import_table}'", type=["xlsx", "xls"])
-        
+        uploaded_file = st.file_uploader(f"Upload Excel for '{import_table}'", type=["xlsx", "xls"])
         if uploaded_file is not None:
             try:
                 import_df = pd.read_excel(uploaded_file)
-                
                 import_df.columns = [str(c).strip().lower() for c in import_df.columns]
-                missing_cols = [c for c in req_cols if c not in import_df.columns]
-                
-                if missing_cols:
-                    st.error(f"❌ File missing required column headers: `{', '.join(missing_cols)}`")
-                else:
-                    st.write("🔍 **Preview Import Excel Data:**")
+                if all(c in import_df.columns for c in req_cols):
                     st.dataframe(import_df[req_cols], use_container_width=True)
-                    
-                    if st.button(f"🚀 Import {len(import_df)} Records into '{import_table}'"):
-                        try:
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            
-                            placeholders = ", ".join(["?"] * len(req_cols))
-                            cols_str = ", ".join(req_cols)
-                            
-                            success_count = 0
-                            for _, row in import_df.iterrows():
-                                vals = [None if pd.isna(row[c]) else str(row[c]).strip() for c in req_cols]
-                                cursor.execute(f"INSERT OR REPLACE INTO {import_table} ({cols_str}) VALUES ({placeholders})", vals)
-                                success_count += 1
-                                
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Data Transaction Successful", f"Imported/updated {success_count} record(s) into table '{import_table}'.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Data Transaction Unsuccessful", f"Import failed: {str(e)}", "error")
+                    if st.button(f"🚀 Import Records into '{import_table}'"):
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        for _, row in import_df.iterrows():
+                            vals = [None if pd.isna(row[c]) else str(row[c]).strip() for c in req_cols]
+                            cursor.execute(f"INSERT OR REPLACE INTO {import_table} ({', '.join(req_cols)}) VALUES ({', '.join(['?']*len(req_cols))})", vals)
+                        conn.commit()
+                        conn.close()
+                        set_transaction_dialog("Data Transaction Successful", "Import completed.", "success")
                         st.rerun()
+                else:
+                    st.error("Missing required column headers.")
             except Exception as e:
-                st.error(f"Error processing file: {str(e)}")
+                st.error(f"Error: {str(e)}")
 
-        # --- INLINE CRUD DATA EDITOR ---
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
-        table_options = ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit"]
-        selected_table = st.selectbox("Choose Database Table to Manage", table_options)
+        selected_table = st.selectbox("Choose Database Table to Manage", ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit", "site_news"])
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
-        
-        original_passwords = {}
+        original_passwords = dict(zip(table_df["username"], table_df["password"])) if selected_table == "users" else {}
         if selected_table == "users":
-            original_passwords = dict(zip(table_df["username"], table_df["password"]))
             table_df["password"] = "••••••••"
-
+        
         drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
         cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
         groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
-        emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
-        trips_list = [t['trip'] for t in conn.execute("SELECT trip FROM trips").fetchall()]
+        emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL").fetchall()]
         conn.close()
         
         column_config = {}
-        if selected_table == "overtime_requests":
-            column_config["needs_transport"] = st.column_config.SelectboxColumn("Needs Transport", options=["Yes", "No"])
-        elif selected_table == "transit_groups":
-            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name (Car)", options=cars_list)
+        if selected_table == "transit_groups":
+            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=cars_list)
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
         elif selected_table == "transit_passengers":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=groups_list)
             column_config["passengers"] = st.column_config.SelectboxColumn("Passenger", options=emp_list)
-        elif selected_table == "daily_transit":
-            column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=["TBA"] + groups_list)
-            column_config["daily"] = st.column_config.SelectboxColumn("Daily Recurring", options=["Yes", "No"])
-            column_config["trip"] = st.column_config.SelectboxColumn("Trip Category", options=trips_list)
 
-        st.markdown("💡 *Edit cells or use dropdowns where configured. Passwords are masked.*")
-        
         edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, column_config=column_config, key=f"editor_{selected_table}")
-        
-        if st.button(f"Save Grid Changes to Database ({selected_table})"):
+        if st.button(f"Save Grid Changes ({selected_table})"):
             try:
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                
                 cursor.execute(f"DELETE FROM {selected_table}")
-                
                 for _, row in edited_df.iterrows():
                     row_dict = row.to_dict()
-                    
-                    if selected_table == "users":
-                        u_name = row_dict.get("username")
-                        if row_dict.get("password") == "••••••••":
-                            row_dict["password"] = original_passwords.get(u_name, "")
-                    
-                    columns = [k for k in row_dict.keys() if row_dict[k] is not None]
-                    values = [row_dict[k] for k in columns]
-                    placeholders = ", ".join(["?"] * len(columns))
-                    col_names = ", ".join(columns)
-                    
-                    cursor.execute(f"INSERT INTO {selected_table} ({col_names}) VALUES ({placeholders})", values)
-                    
+                    if selected_table == "users" and row_dict.get("password") == "••••••••":
+                        row_dict["password"] = original_passwords.get(row_dict.get("username"), "")
+                    cols = [k for k in row_dict.keys() if row_dict[k] is not None]
+                    cursor.execute(f"INSERT INTO {selected_table} ({', '.join(cols)}) VALUES ({', '.join(['?']*len(cols))})", [row_dict[k] for k in cols])
                 conn.commit()
                 conn.close()
-                set_transaction_dialog("Data Transaction Successful", f"Master table '{selected_table}' has been updated successfully.", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Table '{selected_table}' updated.", "success")
             except Exception as e:
-                set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save table updates: {str(e)}", "error")
+                set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
