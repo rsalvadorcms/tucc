@@ -478,10 +478,15 @@ def init_db():
         cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333')")
         cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777')")
 
-    cursor.execute("SELECT COUNT(*) FROM cars")
+    # Ensure TBA exists in cars table
+    cursor.execute("SELECT COUNT(*) FROM cars WHERE car_name = 'TBA'")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO cars VALUES ('Car A', 'B 1234 ABC', 'Toyota Avanza', 'Black')")
-        cursor.execute("INSERT INTO cars VALUES ('Car B', 'B 5678 XYZ', 'Toyota Innova', 'White')")
+        cursor.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES ('TBA', 'TBA', 'TBA', 'TBA')")
+
+    cursor.execute("SELECT COUNT(*) FROM cars")
+    if cursor.fetchone()[0] == 1: # Only TBA exists
+        cursor.execute("INSERT OR IGNORE INTO cars VALUES ('Car A', 'B 1234 ABC', 'Toyota Avanza', 'Black')")
+        cursor.execute("INSERT OR IGNORE INTO cars VALUES ('Car B', 'B 5678 XYZ', 'Toyota Innova', 'White')")
         
     conn.commit()
     conn.close()
@@ -807,7 +812,7 @@ with tab1_c:
     trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
     trip_code_map = {lbl: lbl.split(" (")[0] for lbl in trip_option_labels}
 
-    car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows()]
+    car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows() if r['car_name'] != 'TBA']
     car_label_to_group = {"TBA - To Be Assigned": "TBA"}
     for _, r in cars_db_df.iterrows():
         lbl = f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "")
