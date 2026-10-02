@@ -743,26 +743,48 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION
+# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Highlighted Tabs)
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📌 Navigation")
-nav_selection = st.sidebar.radio(
-    "Go to:",
-    [
-        "🏠 Home & Overview (Passenger List)",
-        "📅 Scheduled Transit Dispatches (Shuttle Format)",
-        "⏰ Overtime & Transport",
-        "👥 Transit Groups & Passengers",
-        "📅 Daily Transit Dispatch Setup",
-        "🏢 Meeting Rooms",
-        "📢 Site News",
-        "🛠️ System Administration"
-    ]
-)
+
+nav_options = [
+    "🏠 Daily Transportation Arrangement",
+    "📅 Shuttle Timetable",
+    "⏰ Overtime & Transport",
+    "👥 Transit Groups & Passengers",
+    "📅 Daily Transit Dispatch Setup",
+    "🏢 Meeting Rooms",
+    "📢 Site News",
+    "🛠️ System Administration"
+]
+
+if 'nav_selection' not in st.session_state:
+    st.session_state.nav_selection = nav_options[0]
+
+# Render interactive custom navigation buttons with light-yellow active highlight
+for opt in nav_options:
+    is_active = (st.session_state.nav_selection == opt)
+    btn_type = "primary" if is_active else "secondary"
+    
+    if is_active:
+        st.sidebar.markdown(
+            f"""
+            <div style="background-color: #FFF2CC; border-left: 5px solid #1F4E78; padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; font-weight: bold; color: #1F4E78;">
+                {opt}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    else:
+        if st.sidebar.button(opt, key=f"nav_btn_{opt}", use_container_width=True):
+            st.session_state.nav_selection = opt
+            st.rerun()
+
+nav_selection = st.session_state.nav_selection
 
 st.sidebar.markdown("---")
 if st.sidebar.button("Logout Profile"):
@@ -774,8 +796,8 @@ if st.sidebar.button("Logout Profile"):
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# 1. HOME & OVERVIEW (Passenger List Layout with Excel-like Freeze Pane Scroll Container)
-if nav_selection == "🏠 Home & Overview (Passenger List)":
+# 1. DAILY TRANSPORTATION ARRANGEMENT (Passenger List Layout with Excel-like Freeze Pane Scroll Container)
+if nav_selection == "🏠 Daily Transportation Arrangement":
     st.markdown(
         """
         <style>
@@ -914,8 +936,8 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
 
-# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format with Excel-like Freeze Pane Scroll Container)
-elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
+# 2. SHUTTLE TIMETABLE (Shuttle Format with Excel-like Freeze Pane Scroll Container)
+elif nav_selection == "📅 Shuttle Timetable":
     st.markdown(
         """
         <style>
@@ -1100,7 +1122,7 @@ elif nav_selection == "⏰ Overtime & Transport":
         
         if is_sunday or is_holiday:
             default_start, default_end, default_origin, default_dest, default_dep_time_str = time(7, 0), time(15, 0), "Panbil", "Yard-1 Office", "07:00"
-            st.caption("ℹ️️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
+            st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
             default_start, default_end, default_origin, default_dest, default_dep_time_str = time(17, 30), time(19, 0), "Yard-1 Office", "Panbil", "19:00"
             st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
@@ -1194,7 +1216,7 @@ elif nav_selection == "⏰ Overtime & Transport":
                     )
 
         if st.session_state.role in ["Admin", "Owner"]:
-            with st.expander("✏ Manage / Remove Overtime Submissions"):
+            with st.expander("✏️ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
                 ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
                 conn.close()
