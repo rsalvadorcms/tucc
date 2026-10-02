@@ -458,6 +458,108 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     buffer.seek(0)
     return buffer.getvalue()
 
+def export_shuttle_timetable_excel(df, effective_date_str=""):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Shuttle Timetable"
+    ws.views.sheetView[0].showGridLines = True
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    
+    font_title = Font(name="Calibri", size=13, bold=True, color="1F4E78")
+    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    font_data = Font(name="Calibri", size=10)
+    
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    thin_border = Border(
+        left=Side(style='thin', color='BFBFBF'), right=Side(style='thin', color='BFBFBF'),
+        top=Side(style='thin', color='BFBFBF'), bottom=Side(style='thin', color='BFBFBF')
+    )
+
+    for r in range(1, 15):
+        for c in range(1, 10):
+            ws.cell(row=r, column=c).fill = white_fill
+
+    ws.merge_cells("B2:G3")
+    title_cell = ws["B2"]
+    title_cell.value = "JGC SHUTTLE TIMETABLE\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
+    title_cell.font = font_title
+    title_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    if os.path.exists(LOGO1_PATH):
+        try:
+            img1 = OpenpyxlImage(LOGO1_PATH)
+            img1.width = 110; img1.height = 45
+            ws.add_image(img1, "A2")
+        except Exception:
+            pass
+
+    if os.path.exists(LOGO2_PATH):
+        try:
+            img2 = OpenpyxlImage(LOGO2_PATH)
+            img2.width = 120; img2.height = 45
+            ws.add_image(img2, "H2")
+        except Exception:
+            pass
+
+    ws.merge_cells("A5:A6")
+    ws["A5"] = "Days (s)"
+    
+    ws.merge_cells("B5:B6")
+    ws["B5"] = "UNIT"
+    
+    ws.merge_cells("C5:C6")
+    ws["C5"] = "DRIVER"
+    
+    ws.merge_cells("D5:D6")
+    ws["D5"] = "TRIP NO."
+
+    ws.merge_cells("E5:G5")
+    ws["E5"] = "ROUTE"
+    ws["E6"] = "YARD - 1"
+    ws["F6"] = "YARD - 3"
+    ws["G6"] = "YARD - 1"
+
+    ws.merge_cells("H5:H6")
+    ws["H5"] = "REMARKS"
+
+    for r in [5, 6]:
+        ws.row_dimensions[r].height = 22
+        for col in range(1, 9):
+            cell = ws.cell(row=r, column=col)
+            cell.font = font_header
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+
+    start_row = 7
+    for idx, row in enumerate(df.iterrows(), start=start_row):
+        r_val = row[1]
+        days_val = str(r_val.get("Days", "MONDAY - SATURDAY"))
+        unit_val = str(r_val.get("Unit", "TOYOTA HI-ACE"))
+        driver_val = str(r_val.get("Driver", "TBA"))
+        trip_no = str(r_val.get("Trip No", "1st"))
+        etd1 = str(r_val.get("ETD Start", ""))
+        etd2 = str(r_val.get("ETD Return", ""))
+        remarks = str(r_val.get("Remarks", "DROP-OFF"))
+
+        row_values = [days_val, unit_val, driver_val, trip_no, etd1, etd2, "", remarks]
+        ws.row_dimensions[idx].height = 20
+        for c_idx, val in enumerate(row_values, start=1):
+            cell = ws.cell(row=idx, column=c_idx, value=val)
+            cell.font = font_data
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    col_widths = {'A': 18, 'B': 18, 'C': 16, 'D': 12, 'E': 15, 'F': 15, 'G': 15, 'H': 15}
+    for col_letter, width in col_widths.items():
+        ws.column_dimensions[col_letter].width = width
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -767,7 +869,7 @@ with tab1:
         
         # --- OVERTIME RECORD MANAGEMENT EXPANDER (Admin & Owner Only) ---
         if st.session_state.role in ["Admin", "Owner"]:
-            with st.expander("✏️ Manage / Remove Overtime Submissions"):
+            with st.expander("✏️️ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
                 ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
                 conn.close()
@@ -1050,6 +1152,7 @@ with tab1_c:
     daily_raw_df = pd.read_sql_query('''
         SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
                t.trip || ' (' || t.trip_name || ')' AS trip_display, 
+               dt.trip AS trip_code,
                dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
                dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
         FROM daily_transit dt 
@@ -1064,6 +1167,23 @@ with tab1_c:
         display_df['Group / Car'] = display_df.apply(lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'], axis=1)
         export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip_display", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip_display": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
         st.dataframe(export_df, use_container_width=True)
+        
+        # --- SHUTTLE TIMETABLE EXCEL EXPORT (Trips A, B, C filtered & formatted) ---
+        shuttle_export_df = daily_raw_df[daily_raw_df['trip_code'].isin(['Trip A', 'Trip B', 'Trip C'])].copy()
+        if not shuttle_export_df.empty:
+            shuttle_export_df['Days'] = shuttle_export_df.apply(lambda r: f"{r['transit_date_start']}" if r['transit_date_start'] == r['transit_date_end'] else f"{r['transit_date_start']} to {r['transit_date_end']}", axis=1)
+            shuttle_export_df['Unit'] = shuttle_export_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
+            shuttle_export_df['Driver'] = "TBA"
+            shuttle_export_df['Trip No'] = shuttle_export_df['trip_code']
+            shuttle_export_df['Remarks'] = "DROP-OFF"
+            
+            st.download_button(
+                "📥 Export Shuttle Timetable Excel (Trips A, B, C)", 
+                data=export_shuttle_timetable_excel(shuttle_export_df), 
+                file_name=f"JGC_Shuttle_Timetable_{datetime.today().strftime('%Y%m%d')}.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
         
         # --- DISPATCH RECORD MANAGEMENT EXPANDER ---
         with st.expander("✏️ Manage / Remove Scheduled Dispatches"):
@@ -1238,7 +1358,7 @@ with tab_news:
 with tab3:
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
-        st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
+        st.error("🛡️️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
