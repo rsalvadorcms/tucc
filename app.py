@@ -739,10 +739,27 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS
+# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📌 Navigation")
+nav_selection = st.sidebar.radio(
+    "Go to:",
+    [
+        "🏠 Home & Overview (Passenger List)",
+        "📅 Scheduled Transit Dispatches (Shuttle Format)",
+        "⏰ Overtime & Transport",
+        "👥 Transit Groups & Passengers",
+        "📅 Daily Transit Dispatch Setup",
+        "🏢 Meeting Rooms",
+        "📢 Site News",
+        "🛠️ System Administration"
+    ]
+)
+
 st.sidebar.markdown("---")
 if st.sidebar.button("Logout Profile"):
     st.session_state.logged_in = False
@@ -751,15 +768,14 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.emp_name = ""
     st.rerun()
 
-tabs = ["🏠 Home & Overview", "⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "📢 Site News", "🛠️ System Administration"]
-tab_home, tab1, tab1_b, tab1_c, tab2, tab_news, tab3 = st.tabs(tabs)
+# --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# --- HOME & OVERVIEW LANDING PAGE ---
-with tab_home:
+# 1. HOME & OVERVIEW (Passenger List Layout)
+if nav_selection == "🏠 Home & Overview (Passenger List)":
     st.header("🏢 Office Operations Portal - Home & Overview")
     st.subheader("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]")
     st.markdown("### Daily Transportation Arrangement - Passenger List Overview")
-    st.caption("This landing page displays the live configured transit groups and passenger allocations matching your official export layout.")
+    st.caption("This landing page displays live configured transit groups and passenger allocations matching your official export layout.")
 
     conn = get_db_connection()
     home_unrolled_df = pd.read_sql_query('''
@@ -775,14 +791,12 @@ with tab_home:
     conn.close()
 
     if not home_unrolled_df.empty:
-        # Format the vehicle description column to match Excel layout exactly (Vehicle Model, Plate, Color)
         display_home_df = home_unrolled_df.copy()
         display_home_df["Vehicle Description"] = display_home_df.apply(
             lambda r: f"{r['Vehicle Model'] or 'Standard Vehicle'} | {r['Plate Number'] or 'N/A'} | Color: {r['Color'] or 'Black'}",
             axis=1
         )
         
-        # Select and order columns identical to export format
         formatted_view_df = display_home_df[[
             "Car Group", "Vehicle Description", "Driver Name", "Contact Number", "Passenger Name", "ETD 1 (From)", "ETD 2 (To)"
         ]].rename(columns={
@@ -796,8 +810,59 @@ with tab_home:
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' to set them up.")
 
-# --- TAB 1: OVERTIME REQUESTS ---
-with tab1:
+# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format - Trips A, B, C)
+elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
+    st.header("📅 Scheduled Transit Dispatches Log (Shuttle Timetable Format)")
+    st.subheader("JGC SHUTTLE TIMETABLE — TUCC PROJECT [MD-1 & MD-4]")
+    st.caption("Filtered and formatted similarly to your Trips A, B, and C Excel export schedule.")
+
+    conn = get_db_connection()
+    shuttle_raw_df = pd.read_sql_query('''
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
+               dt.trip AS trip_code,
+               dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, 
+               tg.driver_name
+        FROM daily_transit dt 
+        LEFT JOIN cars c ON dt.group_name = c.car_name
+        LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
+        WHERE dt.trip IN ('Trip A', 'Trip B', 'Trip C')
+        ORDER BY dt.etd_1 ASC, dt.id DESC
+    ''', conn)
+    conn.close()
+
+    if not shuttle_raw_df.empty:
+        shuttle_display_df = shuttle_raw_df.copy()
+        shuttle_display_df['Days'] = "MONDAY TO SATURDAY"
+        shuttle_display_df['Unit'] = shuttle_display_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
+        shuttle_display_df['Driver'] = shuttle_display_df['driver_name'].fillna("TBA")
+        shuttle_display_df['Trip No.'] = [f"{i}st" if i==1 else f"{i}nd" if i==2 else f"{i}rd" if i==3 else f"{i}th" for i in range(1, len(shuttle_display_df)+1)]
+        shuttle_display_df['Route (Yard-1)'] = shuttle_display_df['etd_1']
+        shuttle_display_df['Route (Yard-3)'] = shuttle_display_df['etd_2']
+        shuttle_display_df['Remarks'] = "DROP-OFF / PICK-UP"
+
+        final_shuttle_view = shuttle_display_df[['Days', 'Unit', 'Driver', 'Trip No.', 'Route (Yard-1)', 'Route (Yard-3)', 'Remarks']]
+        st.dataframe(final_shuttle_view, use_container_width=True)
+
+        # Export Button for Shuttle Timetable
+        shuttle_excel_df = shuttle_raw_df.copy()
+        shuttle_excel_df['Unit'] = shuttle_excel_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
+        shuttle_excel_df['Driver'] = shuttle_excel_df['driver_name'].fillna("TBA")
+        shuttle_excel_df['ETD Start'] = shuttle_excel_df['etd_1']
+        shuttle_excel_df['ETD Return'] = shuttle_excel_df['etd_2']
+        shuttle_excel_df['Remarks'] = "DROP-OFF"
+
+        st.download_button(
+            "📥 Download Shuttle Timetable Excel (.xlsx)",
+            data=export_shuttle_timetable_excel(shuttle_excel_df),
+            file_name=f"JGC_Shuttle_Timetable_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.info("No scheduled transit dispatches found for Trip A, Trip B, or Trip C.")
+
+# 3. OVERTIME & TRANSPORT
+elif nav_selection == "⏰ Overtime & Transport":
     st.header("Request Overtime & Logistics Tracking")
     conn = get_db_connection()
     holiday_list = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)['holiday_date'].tolist()
@@ -809,7 +874,6 @@ with tab1:
         all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
     logged_in_emp = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
 
-    # Calculate allowed dates: Today and Tomorrow (if tomorrow is Sunday or a holiday)
     today_date = date.today()
     tomorrow_date = today_date + timedelta(days=1)
     tomorrow_is_sunday = tomorrow_date.weekday() == 6
@@ -862,7 +926,6 @@ with tab1:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (st.session_state.username, staff, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), needs_transport, origin, destination, dep_time_str, ret_time_str))
                 
-                # --- AUTOMATIC DAILY TRANSIT DISPATCH INTEGRATION ---
                 existing_dispatch = conn.execute(
                     "SELECT id FROM daily_transit WHERE transit_date_start = ? AND transit_date_end = ? AND trip = 'Trip D'", 
                     (date_str, date_str)
@@ -892,7 +955,6 @@ with tab1:
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
         
-        # --- CURRENT & NEXT DATE OVERTIME EXPORT BUTTONS ---
         st.markdown("##### 📥 Export Current & Next Date Overtime Staff List")
         target_export_dates = [today_date.strftime("%Y-%m-%d")]
         if tomorrow_is_sunday or tomorrow_is_holiday:
@@ -924,8 +986,7 @@ with tab1:
                         mime="application/pdf",
                         use_container_width=True
                     )
-        
-        # --- OVERTIME RECORD MANAGEMENT EXPANDER (Admin & Owner Only) ---
+
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
@@ -944,7 +1005,6 @@ with tab1:
                         with o_col2:
                             st.text(f"Time: {o_start} - {o_end}")
                         with o_col3:
-                            # Limited to current date and next date only
                             if o_date in [today_str, tomorrow_str]:
                                 if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
                                     try:
@@ -985,8 +1045,8 @@ with tab1:
 
         st.download_button("📥 Export Overtime Log to Excel (.xlsx)", data=export_df_to_excel(ot_df, sheet_name="Overtime_Requests"), file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
-with tab1_b:
+# 4. TRANSIT GROUPS & PASSENGERS
+elif nav_selection == "👥 Transit Groups & Passengers":
     st.header("👥 Transit Groups & Passengers Management")
     conn = get_db_connection()
     drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
@@ -1060,7 +1120,6 @@ with tab1_b:
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
         
-        # --- PASSENGER RECORD MANAGEMENT EXPANDER ---
         with st.expander("✏️ Manage / Remove Passenger Assignments"):
             conn = get_db_connection()
             passengers_raw = pd.read_sql_query("SELECT id, group_name, passengers FROM transit_passengers", conn)
@@ -1119,8 +1178,8 @@ with tab1_b:
                 use_container_width=True
             )
 
-# --- TAB 1C: DAILY TRANSIT DISPATCH ---
-with tab1_c:
+# 5. DAILY TRANSIT DISPATCH SETUP
+elif nav_selection == "📅 Daily Transit Dispatch Setup":
     st.header("📅 Daily Transit Dispatch Schedule & Route Setting")
     conn = get_db_connection()
     all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
@@ -1228,24 +1287,6 @@ with tab1_c:
         export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip_display", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip_display": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
         st.dataframe(export_df, use_container_width=True)
         
-        # --- SHUTTLE TIMETABLE EXCEL EXPORT (Trips A, B, C filtered & formatted) ---
-        shuttle_export_df = daily_raw_df[daily_raw_df['trip_code'].isin(['Trip A', 'Trip B', 'Trip C'])].copy()
-        if not shuttle_export_df.empty:
-            shuttle_export_df['Unit'] = shuttle_export_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
-            shuttle_export_df['Driver'] = shuttle_export_df['driver_name'].fillna("TBA")
-            shuttle_export_df['ETD Start'] = shuttle_export_df['etd_1']
-            shuttle_export_df['ETD Return'] = shuttle_export_df['etd_2']
-            shuttle_export_df['Remarks'] = "DROP-OFF / PICK-UP"
-            
-            st.download_button(
-                "📥 Export Shuttle Timetable Excel (Trips A, B, C)", 
-                data=export_shuttle_timetable_excel(shuttle_export_df), 
-                file_name=f"JGC_Shuttle_Timetable_{datetime.today().strftime('%Y%m%d')}.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        
-        # --- DISPATCH RECORD MANAGEMENT EXPANDER ---
         with st.expander("✏️ Manage / Remove Scheduled Dispatches"):
             conn = get_db_connection()
             dispatches_raw = pd.read_sql_query("SELECT id, transit_date_start, requested_by, location_from, location_to, trip FROM daily_transit ORDER BY id DESC", conn)
@@ -1275,8 +1316,8 @@ with tab1_c:
 
         st.download_button("📥 Export Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(export_df, sheet_name="Daily_Dispatches"), file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
-with tab2:
+# 6. MEETING ROOMS
+elif nav_selection == "🏢 Meeting Rooms":
     st.header("Meeting Space Reservations Desk")
     conn = get_db_connection()
     rooms = conn.execute("SELECT * FROM meeting_rooms").fetchall()
@@ -1329,8 +1370,8 @@ with tab2:
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
 
-# --- TAB: SITE NEWS ---
-with tab_news:
+# 7. SITE NEWS
+elif nav_selection == "📢 Site News":
     st.header("📢 TUCC PJ Batam Site News & Announcements")
     is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
     
@@ -1414,8 +1455,8 @@ with tab_news:
     else:
         st.info("No site news bulletins published yet.")
 
-# --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
-with tab3:
+# 8. SYSTEM ADMINISTRATION
+elif nav_selection == "🛠️ System Administration":
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
         st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
@@ -1440,7 +1481,6 @@ with tab3:
             else:
                 st.info("No backup snapshots found yet.")
 
-        # --- DATABASE RESTORE / UPLOAD SECTION (Owner Role Only) ---
         if current_role == "Owner":
             with st.expander("📥 Restore Database from Backup File (.db)", expanded=False):
                 st.warning("⚠️ **Caution:** Uploading and restoring a database backup will overwrite the current live database file (`office_operations.db`). A safety backup of your current database will be created automatically before the restore takes place.")
@@ -1510,7 +1550,7 @@ with tab3:
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
-        original_passusers = dict(zip(table_df["username"], table_df["password"])) if selected_table == "users" else {}
+        original_passwords = dict(zip(table_df["username"], table_df["password"])) if selected_table == "users" else {}
         if selected_table == "users":
             table_df["password"] = "••••••••"
         
@@ -1520,7 +1560,6 @@ with tab3:
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL").fetchall()]
         conn.close()
         
-        # Only Owner gets the delete option column in the data editor
         is_owner = (current_role == "Owner")
         if is_owner:
             table_df.insert(0, "🗑️ Delete", False)
@@ -1547,15 +1586,14 @@ with tab3:
                 cursor.execute(f"DELETE FROM {selected_table}")
                 
                 rows_to_save = edited_df.copy()
-                if is_owner and "🗑️️ Delete" in rows_to_save.columns:
-                    # Filter out rows marked for deletion (Owner only)
+                if is_owner and "🗑️ Delete" in rows_to_save.columns:
                     rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
                 
                 for _, row in rows_to_save.iterrows():
                     row_dict = row.to_dict()
                     if selected_table == "users" and row_dict.get("password") == "••••••••":
-                        row_dict["password"] = original_passusers.get(row_dict.get("username"), "")
+                        row_dict["password"] = original_passwords.get(row_dict.get("username"), "")
                     cols = [k for k in row_dict.keys() if row_dict[k] is not None and str(row_dict[k]) != "nan"]
                     cursor.execute(f"INSERT INTO {selected_table} ({', '.join(cols)}) VALUES ({', '.join(['?']*len(cols))})", [row_dict[k] for k in cols])
                 
