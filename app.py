@@ -17,6 +17,16 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 
 # Optional import for PDF rendering
 try:
+    from reportlab.lib.pagesizes import A3, A4, portrait
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+
+# Optional import for PDF rendering
+try:
     from reportlab.lib.pagesizes import A4, portrait
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
