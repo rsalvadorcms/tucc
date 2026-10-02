@@ -727,7 +727,7 @@ with tab1_b:
             else:
                 st.info("No passenger assignments found.")
 
-        col_ex, col_pdf = st.columns(2)
+        col_ex, col_pdf, col_wa = st.columns(3)
         with col_ex:
             st.download_button(
                 "📥 Export to Excel (.xlsx)", 
@@ -745,6 +745,23 @@ with tab1_b:
                     mime="application/pdf", 
                     use_container_width=True
                 )
+        with col_wa:
+            wa_message = urllib.parse.quote(
+                f"📢 *TUCC PJ Batam - Daily Transportation Arrangement*\n"
+                f"📅 Effective Date: {eff_date_str}\n"
+                f"Please find the attached passenger layout schedule above."
+            )
+            wa_url = f"https://wa.me/?text={wa_message}"
+            st.markdown(
+                f"""
+                <div style="margin-top: 28px;">
+                    <a href="{wa_url}" target="_blank" style="display:inline-block; background-color:#25D366; color:white; padding:10px 18px; text-align:center; text-decoration:none; font-weight:bold; border-radius:4px; font-size:14px; width:100%;">
+                        💬 Share on WhatsApp
+                    </a>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
