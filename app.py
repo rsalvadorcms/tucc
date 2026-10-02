@@ -891,6 +891,35 @@ with tab1_c:
         display_df['Group / Car'] = display_df.apply(lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'], axis=1)
         export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip_display", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip_display": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
         st.dataframe(export_df, use_container_width=True)
+        
+        # --- DISPATCH RECORD MANAGEMENT EXPANDER ---
+        with st.expander("✏️ Manage / Remove Scheduled Dispatches"):
+            conn = get_db_connection()
+            dispatches_raw = pd.read_sql_query("SELECT id, transit_date_start, requested_by, location_from, location_to, trip FROM daily_transit ORDER BY id DESC", conn)
+            conn.close()
+            
+            if not dispatches_raw.empty:
+                for _, d_row in dispatches_raw.iterrows():
+                    d_id, d_date, d_req, d_from, d_to, d_trip = d_row['id'], d_row['transit_date_start'], d_row['requested_by'], d_row['location_from'], d_row['location_to'], d_row['trip']
+                    d_col1, d_col2, d_col3 = st.columns([3, 2, 1])
+                    with d_col1:
+                        st.text(f"ID #{d_id} | Date: {d_date} | {d_from} ➔ {d_to}")
+                    with d_col2:
+                        st.text(f"Req: {d_req} | Trip: {d_trip}")
+                    with d_col3:
+                        if st.button("🗑️ Remove", key=f"del_dispatch_{d_id}", type="primary"):
+                            try:
+                                conn = get_db_connection()
+                                conn.execute("DELETE FROM daily_transit WHERE id = ?", (d_id,))
+                                conn.commit()
+                                conn.close()
+                                set_transaction_dialog("Deletion Successful", f"Removed dispatch record #{d_id}.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                            st.rerun()
+            else:
+                st.info("No dispatch records found.")
+
         st.download_button("📥 Export Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(export_df, sheet_name="Daily_Dispatches"), file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- TAB 2: MEETING ROOM BOOKINGS ENGINE ---
