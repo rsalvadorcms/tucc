@@ -759,16 +759,7 @@ with tab1_b:
                 url=wa_url, 
                 use_container_width=True
             
-            st.markdown(
-                f"""
-                <div style="margin-top: 28px;">
-                    <a href="{wa_url}" target="_blank" style="display:inline-block; background-color:#25D366; color:white; padding:10px 18px; text-align:center; text-decoration:none; font-weight:bold; border-radius:4px; font-size:14px; width:100%;">
-                        💬 Share on WhatsApp
-                    </a>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+ 
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
