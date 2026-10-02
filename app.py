@@ -40,7 +40,7 @@ if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
 # ==============================================================================
-# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
+# ⚙️️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
@@ -1189,6 +1189,8 @@ with tab1_c:
         if not shuttle_export_df.empty:
             shuttle_export_df['Unit'] = shuttle_export_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
             shuttle_export_df['Driver'] = shuttle_export_df['driver_name'].fillna("TBA")
+            shuttle_export_df['ETD Start'] = shuttle_export_df['etd_1']
+            shuttle_export_df['ETD Return'] = shuttle_export_df['etd_2']
             shuttle_export_df['Remarks'] = "DROP-OFF / PICK-UP"
             
             st.download_button(
@@ -1459,7 +1461,7 @@ with tab3:
                 st.error(f"Error: {str(e)}")
 
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor & Deletion Support")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         selected_table = st.selectbox("Choose Database Table to Manage", ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit", "site_news"])
         
         conn = get_db_connection()
@@ -1474,12 +1476,16 @@ with tab3:
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL").fetchall()]
         conn.close()
         
-        # Add deletion checkbox column to enable direct row deletion in data_editor
-        table_df.insert(0, "🗑️ Delete", False)
-        
-        column_config = {
-            "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
-        }
+        # Only Owner gets the delete option column in the data editor
+        is_owner = (current_role == "Owner")
+        if is_owner:
+            table_df.insert(0, "🗑️ Delete", False)
+            column_config = {
+                "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
+            }
+        else:
+            column_config = {}
+
         if selected_table == "transit_groups":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=cars_list)
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
@@ -1489,28 +1495,29 @@ with tab3:
 
         edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, column_config=column_config, key=f"editor_{selected_table}")
         
-        if st.button(f"Save Grid Changes & Delete Selected ({selected_table})"):
+        save_button_label = f"Save Grid Changes & Delete Selected ({selected_table})" if is_owner else f"Save Grid Changes ({selected_table})"
+        if st.button(save_button_label):
             try:
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(f"DELETE FROM {selected_table}")
                 
-                # Filter out rows marked for deletion
-                rows_to_save = edited_df[edited_df["🗑️ Delete"] != True].copy()
-                if "🗑️ Delete" in rows_to_save.columns:
+                rows_to_save = edited_df.copy()
+                if is_owner and "🗑️ Delete" in rows_to_save.columns:
+                    # Filter out rows marked for deletion (Owner only)
+                    rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
                 
                 for _, row in rows_to_save.iterrows():
                     row_dict = row.to_dict()
                     if selected_table == "users" and row_dict.get("password") == "••••••••":
                         row_dict["password"] = original_passwords.get(row_dict.get("username"), "")
-                    # Remove auto-increment or null keys if needed
                     cols = [k for k in row_dict.keys() if row_dict[k] is not None and str(row_dict[k]) != "nan"]
                     cursor.execute(f"INSERT INTO {selected_table} ({', '.join(cols)}) VALUES ({', '.join(['?']*len(cols))})", [row_dict[k] for k in cols])
                 
                 conn.commit()
                 conn.close()
-                set_transaction_dialog("Data Transaction Successful", f"Table '{selected_table}' updated and deletions processed.", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Table '{selected_table}' updated successfully.", "success")
             except Exception as e:
                 set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
