@@ -769,22 +769,46 @@ if st.sidebar.button("Logout Profile"):
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# 1. HOME & OVERVIEW (Passenger List Layout with Sticky Frozen Header & White Background Table Styling)
+# 1. HOME & OVERVIEW (Passenger List Layout with Excel-like Freeze Pane Scroll Container)
 if nav_selection == "🏠 Home & Overview (Passenger List)":
-    # Frozen Header Wrapper (Sticky top like Excel freeze pane)
+    # Custom CSS wrapping a fixed height scrollable viewport with a sticky header table
     st.markdown(
         """
         <style>
-        .sticky-header {
+        .freeze-pane-container {
+            max-height: 700px;
+            overflow-y: auto;
+            border: 1px solid #BFBFBF;
+            border-radius: 5px;
+            background-color: white;
+            padding: 10px;
+        }
+        .freeze-pane-container table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            color: black;
+            font-family: Calibri, sans-serif;
+            font-size: 14px;
+        }
+        .freeze-pane-container th {
             position: sticky;
             top: 0;
+            background-color: #1F4E78;
+            color: white;
+            text-align: center;
+            border: 1px solid #BFBFBF;
+            padding: 10px;
+            z-index: 5;
+        }
+        .freeze-pane-container td {
+            border: 1px solid #BFBFBF;
+            text-align: center;
+            vertical-align: middle;
+            padding: 8px;
             background-color: white;
-            z-index: 999;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #1F4E78;
         }
         </style>
-        <div class="sticky-header">
         """,
         unsafe_allow_html=True
     )
@@ -808,9 +832,7 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
         if os.path.exists(LOGO2_PATH):
             st.image(LOGO2_PATH, width=140)
 
-    st.markdown("</div>", unsafe_allow_html=True) # End sticky header wrapper
-
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
 
     conn = get_db_connection()
     home_unrolled_df = pd.read_sql_query('''
@@ -852,30 +874,30 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
             if g_name != current_group:
                 current_group = g_name
                 rendered_groups.clear()
-                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'><b>{g_name}</b><br><span style='font-size:11px;'>{v_desc}</span></td>"
-                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{d_name}</td>"
-                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{c_num}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'><b>{g_name}</b><br><span style='font-size:11px;'>{v_desc}</span></td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{d_name}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{c_num}</td>"
             
-            html_table_rows += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{p_name}</td>"
+            html_table_rows += f"<td>{p_name}</td>"
             
             if g_name not in rendered_groups:
                 rendered_groups.add(g_name)
-                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{etd1}</td>"
-                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{etd2}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{etd1}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{etd2}</td>"
             
             html_table_rows += "</tr>"
 
-        full_custom_html = f"""
-        <div style="background-color: white; padding: 15px; border-radius: 5px;">
-            <table style="width: 100%; border-collapse: collapse; background-color: white; color: black; font-family: Calibri, sans-serif; font-size: 14px;">
+        freeze_pane_html = f"""
+        <div class="freeze-pane-container">
+            <table>
                 <thead>
-                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Vehicle Description</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Driver Name</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Contact Number</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Passenger</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">ETD 1</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 10px;">ETD 2</th>
+                    <tr>
+                        <th>Vehicle Description</th>
+                        <th>Driver Name</th>
+                        <th>Contact Number</th>
+                        <th>Passenger</th>
+                        <th>ETD 1</th>
+                        <th>ETD 2</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -884,7 +906,7 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
             </table>
         </div>
         """
-        st.markdown(full_custom_html, unsafe_allow_html=True)
+        st.markdown(freeze_pane_html, unsafe_allow_html=True)
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
 
