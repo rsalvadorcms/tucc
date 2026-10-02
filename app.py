@@ -1621,9 +1621,6 @@ elif nav_selection == "📢 Site News":
     conn.close()
     
     if not news_df.empty:
-        if "active_news_preview" not in st.session_state:
-            st.session_state.active_news_preview = None
-
         for _, row in news_df.iterrows():
             news_id, title, filename, file_path, file_type, uploaded_by, upload_date = row['id'], row['title'], row['filename'], row['file_path'], row['file_type'], row['uploaded_by'], row['upload_date']
             file_exists = os.path.exists(file_path)
@@ -1637,16 +1634,6 @@ elif nav_selection == "📢 Site News":
                     if file_exists:
                         with open(file_path, "rb") as f:
                             file_bytes = f.read()
-                        
-                        is_currently_previewed = (st.session_state.active_news_preview == news_id)
-                        prev_btn_label = "❌ Close Preview" if is_currently_previewed else "👁️ Preview"
-                        
-                        if st.button(prev_btn_label, key=f"prev_news_{news_id}", use_container_width=True):
-                            if is_currently_previewed:
-                                st.session_state.active_news_preview = None
-                            else:
-                                st.session_state.active_news_preview = news_id
-                            st.rerun()
 
                         st.download_button(
                             label=f"📥 Download ({file_type.upper()})",
@@ -1656,23 +1643,7 @@ elif nav_selection == "📢 Site News":
                             use_container_width=True
                         )
                     else:
-                        st.button("👁️ Preview", key=f"prev_news_dis_{news_id}", disabled=True, use_container_width=True)
                         st.error("File missing.")
-
-                if st.session_state.active_news_preview == news_id and file_exists:
-                    st.markdown("---")
-                    st.markdown(f"#### 🔎 Previewing: {title} (`{filename}`)")
-                    if file_type == "pdf":
-                        # Chrome-compatible embed container with explicit PDF data-uri
-                        encoded_pdf_data = base64.b64encode(file_bytes).decode("utf-8")
-                        pdf_embed_html = f'''
-                        <div style="width: 100%; height: 600px; border: 1px solid #BFBFBF; border-radius: 4px; overflow: hidden;">
-                            <embed src="data:application/pdf;base64,{encoded_pdf_data}" type="application/pdf" width="100%" height="100%" />
-                        </div>
-                        '''
-                        st.markdown(pdf_embed_html, unsafe_allow_html=True)
-                    elif file_type == "png":
-                        st.image(file_bytes, caption=filename, use_container_width=True)
 
                 if is_admin_or_owner:
                     if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
@@ -1683,8 +1654,6 @@ elif nav_selection == "📢 Site News":
                             conn.execute("DELETE FROM site_news WHERE id = ?", (news_id,))
                             conn.commit()
                             conn.close()
-                            if st.session_state.active_news_preview == news_id:
-                                st.session_state.active_news_preview = None
                             set_transaction_dialog("Deletion Successful", "Bulletin deleted.", "success")
                         except Exception as e:
                             set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1696,7 +1665,7 @@ elif nav_selection == "📢 Site News":
 elif nav_selection == "🛠️ System Administration":
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
-        st.error("🛡️️ Restricted Access Control: Admin or Owner clearance required.")
+        st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
