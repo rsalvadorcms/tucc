@@ -217,9 +217,9 @@ def export_overtime_summary_excel(df, title_text="Overtime Schedule"):
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
-    for col in ws.columns:
-        col_letter = col[0].column_letter
-        max_len = max((len(str(cell.value or '')) for cell in col), default=0)
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        max_len = max((len(str(ws.cell(row=r, column=col_idx).value or '')) for r in range(1, ws.max_row + 1)), default=0)
         ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
         
     buffer = io.BytesIO()
