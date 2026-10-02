@@ -82,7 +82,7 @@ def set_transaction_dialog(title: str, message: str, status_type: str = "success
     st.session_state.tx_dialog_type = status_type
 
 def perform_automated_backup():
-    """Creates a timestamped backup of the SQLite database and exports key tables to Excel."""
+    """Creates a timestamped backup of the SQLite database and exports ALL database tables to Excel."""
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
         
@@ -104,6 +104,10 @@ def perform_automated_backup():
             pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
             pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
             pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
+            pd.read_sql_query("SELECT * FROM holidays", conn).to_excel(writer, index=False, sheet_name="holidays")
+            pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
+            pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
+            pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
         conn.close()
     except Exception as e:
         print(f"Excel backup export error: {e}")
@@ -1096,7 +1100,7 @@ elif nav_selection == "⏰ Overtime & Transport":
         
         if is_sunday or is_holiday:
             default_start, default_end, default_origin, default_dest, default_dep_time_str = time(7, 0), time(15, 0), "Panbil", "Yard-1 Office", "07:00"
-            st.caption("ℹ️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
+            st.caption("ℹ️️ Baseline Rule: **Sunday/Holiday (07:00 - 15:00)**.")
         else:
             default_start, default_end, default_origin, default_dest, default_dep_time_str = time(17, 30), time(19, 0), "Yard-1 Office", "Panbil", "19:00"
             st.caption("ℹ️ Baseline Rule: **Weekday/Saturday (17:30 - 19:00)**.")
