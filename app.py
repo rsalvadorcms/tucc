@@ -707,10 +707,7 @@ with tab1_b:
             
             if not passengers_raw.empty:
                 for _, p_row in passengers_raw.iterrows():
-                    p_id = p_row['id']
-                    p_grp = p_row['group_name']
-                    p_name = p_row['passengers']
-                    
+                    p_id, p_grp, p_name = p_row['id'], p_row['group_name'], p_row['passengers']
                     p_col1, p_col2, p_col3 = st.columns([2, 2, 1])
                     with p_col1:
                         st.text(f"Group: {p_grp}")
@@ -732,10 +729,22 @@ with tab1_b:
 
         col_ex, col_pdf = st.columns(2)
         with col_ex:
-            st.download_button("📥 Export to Excel (.xlsx)", data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str), file_name=f"Transit_Arrangement_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.download_button(
+                "📥 Export to Excel (.xlsx)", 
+                data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str), 
+                file_name=f"Daily_Transportation_Arrangement_TUCC_{eff_date_str}.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                use_container_width=True
+            )
         with col_pdf:
             if HAS_REPORTLAB:
-                st.download_button("📄 Export to PDF (.pdf)", data=export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str), file_name=f"Transit_Arrangement_{datetime.today().strftime('%Y%m%d')}.pdf", mime="application/pdf", use_container_width=True)
+                st.download_button(
+                    "📄 Export to PDF (.pdf)", 
+                    data=export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str), 
+                    file_name=f"Daily_Transportation_Arrangement_TUCC_{eff_date_str}.pdf", 
+                    mime="application/pdf", 
+                    use_container_width=True
+                )
 
 # --- TAB 1C: DAILY TRANSIT DISPATCH ---
 with tab1_c:
