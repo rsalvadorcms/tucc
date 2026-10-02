@@ -503,7 +503,6 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         except Exception:
             pass
 
-    # Table Header Rows (Row 5 & 6) (7 Columns total: A through G)
     ws.merge_cells("A5:A6")
     ws["A5"] = "Days (s)"
     
@@ -563,7 +562,6 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         days_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         days_cell.border = thin_border
 
-    # Calculate optimal width for Column B based on content length
     max_unit_len = max([len(str(r.get("Unit", ""))) for _, r in sorted_df.iterrows()] + [4], default=18)
     col_width_b = max(max_unit_len + 4, 22)
 
@@ -676,13 +674,12 @@ def init_db():
         cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333')")
         cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777')")
 
-    # Ensure TBA exists in cars table
     cursor.execute("SELECT COUNT(*) FROM cars WHERE car_name = 'TBA'")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES ('TBA', 'TBA', 'TBA', 'TBA')")
 
     cursor.execute("SELECT COUNT(*) FROM cars")
-    if cursor.fetchone()[0] == 1: # Only TBA exists
+    if cursor.fetchone()[0] == 1:
         cursor.execute("INSERT OR IGNORE INTO cars VALUES ('Car A', 'B 1234 ABC', 'Toyota Avanza', 'Black')")
         cursor.execute("INSERT OR IGNORE INTO cars VALUES ('Car B', 'B 5678 XYZ', 'Toyota Innova', 'White')")
         
@@ -770,12 +767,34 @@ if st.sidebar.button("Logout Profile"):
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# 1. HOME & OVERVIEW (Passenger List Layout)
+# 1. HOME & OVERVIEW (Passenger List Layout with Logo Banners & White Background Table Styling)
 if nav_selection == "🏠 Home & Overview (Passenger List)":
-    st.header("🏢 Office Operations Portal - Home & Overview")
-    st.subheader("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]")
-    st.markdown("### Daily Transportation Arrangement - Passenger List Overview")
-    st.caption("This landing page displays live configured transit groups and passenger allocations matching your official export layout.")
+    # Header Section with Logos & Title matching Excel layout
+    h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
+    with h_col1:
+        if os.path.exists(LOGO1_PATH):
+            st.image(LOGO1_PATH, width=130)
+    with h_col2:
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <h3 style="color: #1F4E78; margin-bottom: 0px;">Daily Transportation Arrangement - Passenger list</h3>
+                <h4 style="color: #333333; margin-top: 2px; margin-bottom: 2px;">TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]</h4>
+                <p style="color: #555555; font-size: 14px; font-weight: bold; margin-top: 0px;">JOB CODE : 0 - 0847 - 00 - 0001</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with h_col3:
+        if os.path.exists(LOGO2_PATH):
+            st.image(LOGO2_PATH, width=140)
+
+    st.markdown("---")
+    
+    col_lbl, col_date = st.columns([3, 1])
+    with col_date:
+        home_effective_date = st.date_input("Effective Date", value=date.today(), key="home_eff_date")
+        home_eff_date_str = home_effective_date.strftime("%Y-%m-%d")
 
     conn = get_db_connection()
     home_unrolled_df = pd.read_sql_query('''
@@ -793,28 +812,90 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
     if not home_unrolled_df.empty:
         display_home_df = home_unrolled_df.copy()
         display_home_df["Vehicle Description"] = display_home_df.apply(
-            lambda r: f"{r['Vehicle Model'] or 'Standard Vehicle'} | {r['Plate Number'] or 'N/A'} | Color: {r['Color'] or 'Black'}",
+            lambda r: f"{r['Vehicle Model'] or 'Standard Vehicle'}<br>{r['Plate Number'] or 'N/A'}<br>Color : {r['Color'] or 'Black'}",
             axis=1
         )
         
-        formatted_view_df = display_home_df[[
-            "Car Group", "Vehicle Description", "Driver Name", "Contact Number", "Passenger Name", "ETD 1 (From)", "ETD 2 (To)"
-        ]].rename(columns={
-            "Car Group": "Group",
-            "Passenger Name": "Passenger",
-            "ETD 1 (From)": "ETD 1",
-            "ETD 2 (To)": "ETD 2"
-        })
+        # Build clean merged-group HTML table representation to mimic the exact Excel layout visually with white background
+        html_table_rows = ""
+        current_group = None
+        group_rowspan_counts = display_home_df['Car Group'].value_counts()
         
-        st.dataframe(formatted_view_df, use_container_width=True)
-    else:
-        st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' to set them up.")
+        # We will iterate and render HTML rows with rowspan for shared group properties
+        rendered_groups = set()
+        for _, row in display_home_df.iterrows():
+            g_name = row['Car Group']
+            v_desc = row['Vehicle Description']
+            d_name = row['Driver Name'] or ""
+            c_num = row['Contact Number'] or ""
+            p_name = row['Passenger Name'] or ""
+            etd1 = row['ETD 1 (From)'] or ""
+            etd2 = row['ETD 2 (To)'] or ""
+            
+            span_count = group_rowspan_counts.get(g_name, 1)
+            
+            html_table_rows += "<tr>"
+            if g_name != current_group:
+                current_group = g_name
+                rendered_groups.clear()
+                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'><b>{g_name}</b><br><span style='font-size:11px;'>{v_desc}</span></td>"
+                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{d_name}</td>"
+                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{c_num}</td>"
+            
+            html_table_rows += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{p_name}</td>"
+            
+            if g_name not in rendered_groups:
+                rendered_groups.add(g_name)
+                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{etd1}</td>"
+                html_table_rows += f"<td rowspan='{span_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{etd2}</td>"
+            
+            html_table_rows += "</tr>"
 
-# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format - Trips A, B, C)
+        full_custom_html = f"""
+        <div style="background-color: white; padding: 15px; border-radius: 5px;">
+            <div style="text-align: right; font-weight: bold; margin-bottom: 10px; color: black;">Effective Date: {home_eff_date_str}</div>
+            <table style="width: 100%; border-collapse: collapse; background-color: white; color: black; font-family: Calibri, sans-serif; font-size: 14px;">
+                <thead>
+                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Vehicle Description</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Driver Name</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Contact Number</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">Passenger</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">ETD 1</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 10px;">ETD 2</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {html_table_rows}
+                </tbody>
+            </table>
+        </div>
+        """
+        st.markdown(full_custom_html, unsafe_allow_html=True)
+    else:
+        st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
+
+# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format - Trips A, B, C with Logo Banners & White Background Table Styling)
 elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
-    st.header("📅 Scheduled Transit Dispatches Log (Shuttle Timetable Format)")
-    st.subheader("JGC SHUTTLE TIMETABLE — TUCC PROJECT [MD-1 & MD-4]")
-    st.caption("Filtered and formatted similarly to your Trips A, B, and C Excel export schedule.")
+    h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
+    with h_col1:
+        if os.path.exists(LOGO1_PATH):
+            st.image(LOGO1_PATH, width=130)
+    with h_col2:
+        st.markdown(
+            """
+            <div style="text-align: center;">
+                <h3 style="color: #1F4E78; margin-bottom: 0px;">JGC SHUTTLE TIMETABLE</h3>
+                <h4 style="color: #333333; margin-top: 2px; margin-bottom: 2px;">TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]</h4>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with h_col3:
+        if os.path.exists(LOGO2_PATH):
+            st.image(LOGO2_PATH, width=140)
+
+    st.markdown("---")
 
     conn = get_db_connection()
     shuttle_raw_df = pd.read_sql_query('''
@@ -833,7 +914,7 @@ elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
 
     if not shuttle_raw_df.empty:
         shuttle_display_df = shuttle_raw_df.copy()
-        shuttle_display_df['Days'] = "MONDAY TO SATURDAY"
+        shuttle_display_df['Days'] = "MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY"
         shuttle_display_df['Unit'] = shuttle_display_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
         shuttle_display_df['Driver'] = shuttle_display_df['driver_name'].fillna("TBA")
         shuttle_display_df['Trip No.'] = [f"{i}st" if i==1 else f"{i}nd" if i==2 else f"{i}rd" if i==3 else f"{i}th" for i in range(1, len(shuttle_display_df)+1)]
@@ -841,10 +922,55 @@ elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
         shuttle_display_df['Route (Yard-3)'] = shuttle_display_df['etd_2']
         shuttle_display_df['Remarks'] = "DROP-OFF / PICK-UP"
 
-        final_shuttle_view = shuttle_display_df[['Days', 'Unit', 'Driver', 'Trip No.', 'Route (Yard-1)', 'Route (Yard-3)', 'Remarks']]
-        st.dataframe(final_shuttle_view, use_container_width=True)
+        shuttle_rows_html = ""
+        total_rows_count = len(shuttle_display_df)
+        
+        for idx, row in shuttle_display_df.iterrows():
+            u_val = row['Unit']
+            d_val = row['Driver']
+            t_no = row['Trip No.']
+            r_y1 = row['Route (Yard-1)']
+            r_y3 = row['Route (Yard-2)' if 'Route (Yard-2)' in row else 'Route (Yard-3)']
+            rem = row['Remarks']
+            
+            shuttle_rows_html += "<tr>"
+            if idx == 0:
+                shuttle_rows_html += f"<td rowspan='{total_rows_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 10px; font-weight: bold;'>MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY</td>"
+            
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{u_val}</td>"
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{d_val}</td>"
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{t_no}</td>"
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{r_y1}</td>"
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{r_y3}</td>"
+            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{rem}</td>"
+            shuttle_rows_html += "</tr>"
 
-        # Export Button for Shuttle Timetable
+        full_shuttle_html = f"""
+        <div style="background-color: white; padding: 15px; border-radius: 5px;">
+            <table style="width: 100%; border-collapse: collapse; background-color: white; color: black; font-family: Calibri, sans-serif; font-size: 14px;">
+                <thead>
+                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
+                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">Days (s)</th>
+                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">UNIT</th>
+                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">DRIVER</th>
+                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">TRIP NO.</th>
+                        <th colspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">ROUTE</th>
+                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">REMARKS</th>
+                    </tr>
+                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
+                        <th style="border: 1px solid #BFBFBF; padding: 8px;">YARD - 1</th>
+                        <th style="border: 1px solid #BFBFBF; padding: 8px;">YARD - 3</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {shuttle_rows_html}
+                </tbody>
+            </table>
+        </div>
+        """
+        st.markdown(full_shuttle_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
         shuttle_excel_df = shuttle_raw_df.copy()
         shuttle_excel_df['Unit'] = shuttle_excel_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
         shuttle_excel_df['Driver'] = shuttle_excel_df['driver_name'].fillna("TBA")
