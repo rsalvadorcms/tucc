@@ -770,7 +770,7 @@ with tab1_c:
     is_admin = st.session_state.get("role", "") == "Admin"
 
     trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
-    trip_code_map = {lbl: lbl.split(" ")[0] for lbl in trip_option_labels}
+    trip_code_map = {lbl: lbl.split(" (")[0] for lbl in trip_option_labels}
 
     car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows()]
     car_label_to_group = {"TBA - To Be Assigned": "TBA"}
@@ -835,9 +835,13 @@ with tab1_c:
     st.subheader("📊 Scheduled Transit Dispatches Log")
     conn = get_db_connection()
     daily_raw_df = pd.read_sql_query('''
-        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, dt.trip, dt.requested_by, 
-               dt.group_name, c.plate_number, c.vehicle, dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
-        FROM daily_transit dt LEFT JOIN cars c ON dt.group_name = c.car_name
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
+               t.trip || ' (' || t.trip_name || ')' AS trip_display, 
+               dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
+        FROM daily_transit dt 
+        LEFT JOIN cars c ON dt.group_name = c.car_name
+        LEFT JOIN trips t ON dt.trip = t.trip
         ORDER BY dt.transit_date_start DESC, dt.id DESC
     ''', conn)
     conn.close()
@@ -845,7 +849,7 @@ with tab1_c:
     if not daily_raw_df.empty:
         display_df = daily_raw_df.copy()
         display_df['Group / Car'] = display_df.apply(lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'], axis=1)
-        export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
+        export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip_display", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip_display": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
         st.dataframe(export_df, use_container_width=True)
         st.download_button("📥 Export Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(export_df, sheet_name="Daily_Dispatches"), file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
