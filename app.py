@@ -623,7 +623,7 @@ with tab1:
                 
                 # --- AUTOMATIC DAILY TRANSIT DISPATCH INTEGRATION ---
                 existing_dispatch = conn.execute(
-                    "SELECT id FROM daily_transit WHERE transit_date_start = ? AND transit_date_end = ?", 
+                    "SELECT id FROM daily_transit WHERE transit_date_start = ? AND transit_date_end = ? AND trip = 'Trip D'", 
                     (date_str, date_str)
                 ).fetchone()
                 
@@ -631,7 +631,7 @@ with tab1:
                     conn.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (date_str, date_str, "TBA", logged_in_emp, "19:00", "", "Yard-1 Office", "Panbil", "No", "Trip D"))
+                    ''', (date_str, date_str, "TBA", st.session_state.username, dep_time_str if dep_time_str else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
                 
                 conn.commit()
                 conn.close()
@@ -655,18 +655,40 @@ with tab1:
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
-                ot_raw = pd.read_sql_query("SELECT id, ot_date, emp_name, start_time, end_time FROM overtime_requests ORDER BY id DESC", conn)
+                ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
                 conn.close()
                 
                 if not ot_raw.empty:
                     for _, o_row in ot_raw.iterrows():
-                        o_id, o_date, o_emp, o_start, o_end = o_row['id'], o_row['ot_date'], o_row['emp_name'], o_row['start_time'], o_row['end_time']
-                        o_col1, o_col2, o_col3 = st.columns([3, 2, 1])
+                        o_id, o_uname, o_date, o_emp, o_start, o_end, o_dep = o_row['id'], o_row['username'], o_row['ot_date'], o_row['emp_name'], o_row['start_time'], o_row['end_time'], o_row['departure_time']
+                        o_col1, o_col2, o_col3, o_col4 = st.columns([3, 2, 1, 1])
                         with o_col1:
                             st.text(f"ID #{o_id} | Date: {o_date} | Staff: {o_emp}")
                         with o_col2:
                             st.text(f"Time: {o_start} - {o_end}")
                         with o_col3:
+                            if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
+                                try:
+                                    conn = get_db_connection()
+                                    existing_dt = conn.execute(
+                                        "SELECT id FROM daily_transit WHERE transit_date_start = ? AND trip = 'Trip D'",
+                                        (o_date,)
+                                    ).fetchone()
+                                    
+                                    if not existing_dt:
+                                        conn.execute('''
+                                            INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
+                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
+                                        conn.commit()
+                                        set_transaction_dialog("Transport Request Added", f"Daily transit dispatch (Trip D) created for date {o_date}.", "success")
+                                    else:
+                                        set_transaction_dialog("Already Exists", f"A Trip D transit dispatch for date {o_date} already exists.", "info")
+                                    conn.close()
+                                except Exception as e:
+                                    set_transaction_dialog("Action Unsuccessful", f"Failed: {str(e)}", "error")
+                                st.rerun()
+                        with o_col4:
                             if st.button("🗑️ Remove", key=f"del_ot_{o_id}", type="primary"):
                                 try:
                                     conn = get_db_connection()
@@ -1076,7 +1098,7 @@ with tab_news:
                     else:
                         st.error("File missing.")
                 if is_admin_or_owner:
-                    if st.button(f"🗑️️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
+                    if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
                         try:
                             if os.path.exists(file_path):
                                 os.remove(file_path)
