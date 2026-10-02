@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import threading
+import base64
 import time as time_module
 from datetime import datetime, date, timedelta, time
 
@@ -1662,8 +1663,8 @@ elif nav_selection == "📢 Site News":
                     st.markdown("---")
                     st.markdown(f"#### 🔎 Previewing: {title} (`{filename}`)")
                     if file_type == "pdf":
-                        # Render PDF using a robust object/embed tag supported across browsers
-                        pdf_html = f'<object data="data:application/pdf;base64,{import_base64 := __import__("base64").b64encode(file_bytes).decode("utf-8")}" type="application/pdf" width="100%" height="600px"><p>Your web browser does not support inline PDF previews. Please use the download button above.</p></object>'
+                        encoded_pdf_data = base64.b64encode(file_bytes).decode("utf-8")
+                        pdf_html = f'<object data="data:application/pdf;base64,{encoded_pdf_data}" type="application/pdf" width="100%" height="600px"><p>Your web browser does not support inline PDF previews. Please use the download button above.</p></object>'
                         st.markdown(pdf_html, unsafe_allow_html=True)
                     elif file_type == "png":
                         st.image(file_bytes, caption=filename, use_container_width=True)
@@ -1795,7 +1796,7 @@ elif nav_selection == "🛠️ System Administration":
         if is_owner:
             table_df.insert(0, "🗑️ Delete", False)
             column_config = {
-                "🗑️️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
+                "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
             }
         else:
             column_config = {}
