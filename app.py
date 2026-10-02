@@ -642,7 +642,7 @@ with tab1:
 
     st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
-    if st.session_state.role == "Admin":
+    if st.session_state.role in ["Admin", "Owner"]:
         ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests", conn)
     else:
         ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests WHERE username = ?", conn, params=[st.session_state.username])
@@ -650,6 +650,36 @@ with tab1:
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
+        
+        # --- OVERTIME RECORD MANAGEMENT EXPANDER (Admin & Owner Only) ---
+        if st.session_state.role in ["Admin", "Owner"]:
+            with st.expander("✏️ Manage / Remove Overtime Submissions"):
+                conn = get_db_connection()
+                ot_raw = pd.read_sql_query("SELECT id, ot_date, emp_name, start_time, end_time FROM overtime_requests ORDER BY id DESC", conn)
+                conn.close()
+                
+                if not ot_raw.empty:
+                    for _, o_row in ot_raw.iterrows():
+                        o_id, o_date, o_emp, o_start, o_end = o_row['id'], o_row['ot_date'], o_row['emp_name'], o_row['start_time'], o_row['end_time']
+                        o_col1, o_col2, o_col3 = st.columns([3, 2, 1])
+                        with o_col1:
+                            st.text(f"ID #{o_id} | Date: {o_date} | Staff: {o_emp}")
+                        with o_col2:
+                            st.text(f"Time: {o_start} - {o_end}")
+                        with o_col3:
+                            if st.button("🗑️ Remove", key=f"del_ot_{o_id}", type="primary"):
+                                try:
+                                    conn = get_db_connection()
+                                    conn.execute("DELETE FROM overtime_requests WHERE id = ?", (o_id,))
+                                    conn.commit()
+                                    conn.close()
+                                    set_transaction_dialog("Deletion Successful", f"Removed overtime record #{o_id}.", "success")
+                                except Exception as e:
+                                    set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                                st.rerun()
+                else:
+                    st.info("No overtime submissions found.")
+
         st.download_button("📥 Export Overtime Log to Excel (.xlsx)", data=export_df_to_excel(ot_df, sheet_name="Overtime_Requests"), file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # --- TAB 1B: TRANSIT GROUPS & PASSENGERS MANAGEMENT ---
@@ -807,7 +837,7 @@ with tab1_c:
     if not all_emp_names:
         all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
     default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
-    is_admin = st.session_state.get("role", "") == "Admin"
+    is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
 
     trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
     trip_code_map = {lbl: lbl.split(" (")[0] for lbl in trip_option_labels}
@@ -829,7 +859,7 @@ with tab1_c:
         selected_trip_label = st.selectbox("Trip Category", options=trip_option_labels, index=0, key=f"dt_trip_{reset_id}")
         selected_trip_code = trip_code_map.get(selected_trip_label, "Trip A")
 
-        is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"] if is_admin else ["No"], index=0, disabled=not is_admin, key=f"dt_daily_{reset_id}")
+        is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"] if is_admin_or_owner else ["No"], index=0, disabled=not is_admin_or_owner, key=f"dt_daily_{reset_id}")
         dispatch_date_start = st.date_input("Select Transit Start Date", value=date.today(), min_value=date.today(), key=f"reg_dt_start_{reset_id}")
         
         if is_daily == "Yes":
@@ -844,8 +874,8 @@ with tab1_c:
         st.subheader("Schedule & Vehicle Allocation")
         raw_etd1 = st.text_input("ETD 1 (Start Time)", value="08:00" if reset_id == 0 else "", placeholder="0800", key=f"etd1_{reset_id}")
         raw_etd2 = st.text_input("ETD 2 (Return Time)", value="17:00" if reset_id == 0 else "", placeholder="1700", key=f"etd2_{reset_id}")
-        selected_car_label = st.selectbox("Assigned Group / Car Name", options=car_option_labels, index=0, disabled=not is_admin, key=f"car_{reset_id}")
-        selected_group = car_label_to_group.get(selected_car_label, "TBA") if is_admin else "TBA"
+        selected_car_label = st.selectbox("Assigned Group / Car Name", options=car_option_labels, index=0, disabled=not is_admin_or_owner, key=f"car_{reset_id}")
+        selected_group = car_label_to_group.get(selected_car_label, "TBA") if is_admin_or_owner else "TBA"
 
     b_col1, b_col2 = st.columns([1, 4])
     with b_col1:
@@ -979,10 +1009,10 @@ with tab2:
 # --- TAB: SITE NEWS ---
 with tab_news:
     st.header("📢 TUCC PJ Batam Site News & Announcements")
-    is_admin = st.session_state.get("role", "") == "Admin"
+    is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
     
-    if is_admin:
-        with st.expander("📤 Upload New Site News Bulletin (Admin Only)", expanded=False):
+    if is_admin_or_owner:
+        with st.expander("📤 Upload New Site News Bulletin (Admin / Owner Only)", expanded=False):
             with st.form("news_upload_form", clear_on_submit=True):
                 news_title = st.text_input("News Title / Description")
                 uploaded_news_file = st.file_uploader("Upload Bulletin File (PDF or PNG only)", type=["pdf", "png"])
@@ -1045,8 +1075,8 @@ with tab_news:
                         )
                     else:
                         st.error("File missing.")
-                if is_admin:
-                    if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
+                if is_admin_or_owner:
+                    if st.button(f"🗑️️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
                         try:
                             if os.path.exists(file_path):
                                 os.remove(file_path)
@@ -1063,8 +1093,9 @@ with tab_news:
 
 # --- TAB 3: SYSTEM MASTER ADMINISTRATION CONTROL BOARDS ---
 with tab3:
-    if st.session_state.role != "Admin":
-        st.error("🛡️ Restricted Access Control: Admin clearance required.")
+    current_role = st.session_state.get("role", "")
+    if current_role not in ["Admin", "Owner"]:
+        st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
@@ -1086,25 +1117,28 @@ with tab3:
             else:
                 st.info("No backup snapshots found yet.")
 
-        # --- DATABASE RESTORE / UPLOAD SECTION ---
-        with st.expander("📥 Restore Database from Backup File (.db)", expanded=False):
-            st.warning("⚠️ **Caution:** Uploading and restoring a database backup will overwrite the current live database file (`office_operations.db`). A safety backup of your current database will be created automatically before the restore takes place.")
-            uploaded_db_file = st.file_uploader("Upload Database Backup (.db)", type=["db"])
-            
-            if uploaded_db_file is not None:
-                if st.button("🚀 Confirm and Restore Database", type="primary"):
-                    try:
-                        if os.path.exists(DB_FILE):
-                            safety_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            shutil.copy2(DB_FILE, os.path.join(BACKUP_DIR, f"pre_restore_safety_{safety_timestamp}.db"))
-                        
-                        with open(DB_FILE, "wb") as f:
-                            f.write(uploaded_db_file.getbuffer())
+        # --- DATABASE RESTORE / UPLOAD SECTION (Owner Role Only) ---
+        if current_role == "Owner":
+            with st.expander("📥 Restore Database from Backup File (.db)", expanded=False):
+                st.warning("⚠️ **Caution:** Uploading and restoring a database backup will overwrite the current live database file (`office_operations.db`). A safety backup of your current database will be created automatically before the restore takes place.")
+                uploaded_db_file = st.file_uploader("Upload Database Backup (.db)", type=["db"])
+                
+                if uploaded_db_file is not None:
+                    if st.button("🚀 Confirm and Restore Database", type="primary"):
+                        try:
+                            if os.path.exists(DB_FILE):
+                                safety_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                shutil.copy2(DB_FILE, os.path.join(BACKUP_DIR, f"pre_restore_safety_{safety_timestamp}.db"))
                             
-                        set_transaction_dialog("Database Restored Successfully", "The database has been successfully replaced and restored from the backup file.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Restore Unsuccessful", f"Failed to restore database: {str(e)}", "error")
-                    st.rerun()
+                            with open(DB_FILE, "wb") as f:
+                                f.write(uploaded_db_file.getbuffer())
+                                
+                            set_transaction_dialog("Database Restored Successfully", "The database has been successfully replaced and restored from the backup file.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Restore Unsuccessful", f"Failed to restore database: {str(e)}", "error")
+                        st.rerun()
+        else:
+            st.info("ℹ️ Note: **Restore Database from Backup** is restricted to **Owner** accounts only.")
 
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
