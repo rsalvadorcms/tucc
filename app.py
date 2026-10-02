@@ -102,6 +102,7 @@ def perform_automated_backup():
             pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
             pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
             pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
+            pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
         conn.close()
     except Exception as e:
         print(f"Excel backup export error: {e}")
@@ -124,7 +125,6 @@ def run_scheduler():
                 
         time_module.sleep(30)
 
-# Start background backup scheduler thread once per session lifecycle
 if 'backup_scheduler_started' not in st.session_state:
     st.session_state.backup_scheduler_started = True
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
@@ -698,6 +698,38 @@ with tab1_b:
     
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
+        
+        # --- PASSENGER RECORD MANAGEMENT EXPANDER ---
+        with st.expander("✏️ Manage / Remove Passenger Assignments"):
+            conn = get_db_connection()
+            passengers_raw = pd.read_sql_query("SELECT id, group_name, passengers FROM transit_passengers", conn)
+            conn.close()
+            
+            if not passengers_raw.empty:
+                for _, p_row in passengers_raw.iterrows():
+                    p_id = p_row['id']
+                    p_grp = p_row['group_name']
+                    p_name = p_row['passengers']
+                    
+                    p_col1, p_col2, p_col3 = st.columns([2, 2, 1])
+                    with p_col1:
+                        st.text(f"Group: {p_grp}")
+                    with p_col2:
+                        st.text(f"Passenger: {p_name}")
+                    with p_col3:
+                        if st.button("🗑️ Remove", key=f"del_passenger_{p_id}", type="primary"):
+                            try:
+                                conn = get_db_connection()
+                                conn.execute("DELETE FROM transit_passengers WHERE id = ?", (p_id,))
+                                conn.commit()
+                                conn.close()
+                                set_transaction_dialog("Deletion Successful", f"Removed passenger '{p_name}' from group '{p_grp}'.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                            st.rerun()
+            else:
+                st.info("No passenger assignments found.")
+
         col_ex, col_pdf = st.columns(2)
         with col_ex:
             st.download_button("📥 Export to Excel (.xlsx)", data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str), file_name=f"Transit_Arrangement_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
