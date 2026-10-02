@@ -17,7 +17,7 @@ from openpyxl.drawing.image import Image as OpenpyxlImage
 
 # Optional import for PDF rendering
 try:
-    from reportlab.lib.pagesizes import A3, portrait
+    from reportlab.lib.pagesizes import A4, portrait
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
@@ -177,6 +177,87 @@ def export_df_to_excel(df, sheet_name="Data"):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buffer.getvalue()
+
+def export_overtime_summary_excel(df, title_text="Overtime Schedule"):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Overtime Summary"
+    ws.views.sheetView[0].showGridLines = True
+    
+    font_title = Font(name="Calibri", size=12, bold=True, color="1F4E78")
+    font_header = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    font_data = Font(name="Calibri", size=10)
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    thin_border = Border(
+        left=Side(style='thin', color='BFBFBF'), right=Side(style='thin', color='BFBFBF'),
+        top=Side(style='thin', color='BFBFBF'), bottom=Side(style='thin', color='BFBFBF')
+    )
+    
+    ws.merge_cells("A1:E1")
+    t_cell = ws["A1"]
+    t_cell.value = title_text
+    t_cell.font = font_title
+    t_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 25
+    
+    headers = list(df.columns)
+    for c_idx, h in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=c_idx, value=h)
+        cell.font = font_header
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+    ws.row_dimensions[3].height = 20
+    
+    for r_idx, row in enumerate(df.iterrows(), start=4):
+        for c_idx, val in enumerate(row[1], start=1):
+            cell = ws.cell(row=r_idx, column=c_idx, value="" if pd.isna(val) else val)
+            cell.font = font_data
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+    for col in ws.columns:
+        col_letter = col[0].column_letter
+        max_len = max((len(str(cell.value or '')) for cell in col), default=0)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 18)
+        
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+def export_overtime_summary_pdf(df, title_text="Overtime Schedule"):
+    if not HAS_REPORTLAB:
+        return None
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=portrait(A4), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, leading=16, alignment=1, textColor=colors.HexColor('#1F4E78'))
+    cell_style = ParagraphStyle('CellSt', parent=styles['Normal'], fontName='Helvetica', fontSize=9, leading=11, alignment=1)
+    header_style = ParagraphStyle('HeadSt', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=11, alignment=1, textColor=colors.white)
+    
+    story = [Paragraph(title_text, title_style), Spacer(1, 15)]
+    
+    headers = list(df.columns)
+    table_data = [[Paragraph(h, header_style) for h in headers]]
+    
+    for _, row in df.iterrows():
+        row_cells = [Paragraph(str(val if pd.notna(val) else ""), cell_style) for val in row]
+        table_data.append(row_cells)
+        
+    t = Table(table_data, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F4E78')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#BFBFBF')),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t)
+    doc.build(story)
+    buffer.seek(0)
     return buffer.getvalue()
 
 def export_custom_batam_excel(detailed_df, effective_date_str=""):
@@ -651,6 +732,39 @@ with tab1:
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
         
+        # --- CURRENT & NEXT DATE OVERTIME EXPORT BUTTONS ---
+        st.markdown("##### 📥 Export Current & Next Date Overtime Staff List")
+        target_export_dates = [today_date.strftime("%Y-%m-%d")]
+        if tomorrow_is_sunday or tomorrow_is_holiday:
+            target_export_dates.append(tomorrow_date.strftime("%Y-%m-%d"))
+            
+        conn = get_db_connection()
+        placeholders = ','.join(['?'] * len(target_export_dates))
+        summary_query = f"SELECT emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination' FROM overtime_requests WHERE ot_date IN ({placeholders})"
+        curr_next_ot_df = pd.read_sql_query(summary_query, conn, params=target_export_dates)
+        conn.close()
+        
+        if not curr_next_ot_df.empty:
+            exp_col1, exp_col2 = st.columns(2)
+            dates_label_str = " & ".join(target_export_dates)
+            with exp_col1:
+                st.download_button(
+                    "📥 Export Current/Next OT Staff to Excel (.xlsx)",
+                    data=export_overtime_summary_excel(curr_next_ot_df, title_text=f"Overtime Staff List ({dates_label_str})"),
+                    file_name=f"Overtime_Staff_List_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            with exp_col2:
+                if HAS_REPORTLAB:
+                    st.download_button(
+                        "📄 Export Current/Next OT Staff to PDF (.pdf)",
+                        data=export_overtime_summary_pdf(curr_next_ot_df, title_text=f"Overtime Staff List ({dates_label_str})"),
+                        file_name=f"Overtime_Staff_List_{datetime.today().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+        
         # --- OVERTIME RECORD MANAGEMENT EXPANDER (Admin & Owner Only) ---
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Overtime Submissions"):
@@ -659,6 +773,9 @@ with tab1:
                 conn.close()
                 
                 if not ot_raw.empty:
+                    today_str = date.today().strftime("%Y-%m-%d")
+                    tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+                    
                     for _, o_row in ot_raw.iterrows():
                         o_id, o_uname, o_date, o_emp, o_start, o_end, o_dep = o_row['id'], o_row['username'], o_row['ot_date'], o_row['emp_name'], o_row['start_time'], o_row['end_time'], o_row['departure_time']
                         o_col1, o_col2, o_col3, o_col4 = st.columns([3, 2, 1, 1])
@@ -667,27 +784,31 @@ with tab1:
                         with o_col2:
                             st.text(f"Time: {o_start} - {o_end}")
                         with o_col3:
-                            if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
-                                try:
-                                    conn = get_db_connection()
-                                    existing_dt = conn.execute(
-                                        "SELECT id FROM daily_transit WHERE transit_date_start = ? AND trip = 'Trip D'",
-                                        (o_date,)
-                                    ).fetchone()
-                                    
-                                    if not existing_dt:
-                                        conn.execute('''
-                                            INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                        ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
-                                        conn.commit()
-                                        set_transaction_dialog("Transport Request Added", f"Daily transit dispatch (Trip D) created for date {o_date}.", "success")
-                                    else:
-                                        set_transaction_dialog("Already Exists", f"A Trip D transit dispatch for date {o_date} already exists.", "info")
-                                    conn.close()
-                                except Exception as e:
-                                    set_transaction_dialog("Action Unsuccessful", f"Failed: {str(e)}", "error")
-                                st.rerun()
+                            # Limited to current date and next date only
+                            if o_date in [today_str, tomorrow_str]:
+                                if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
+                                    try:
+                                        conn = get_db_connection()
+                                        existing_dt = conn.execute(
+                                            "SELECT id FROM daily_transit WHERE transit_date_start = ? AND trip = 'Trip D'",
+                                            (o_date,)
+                                        ).fetchone()
+                                        
+                                        if not existing_dt:
+                                            conn.execute('''
+                                                INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
+                                            conn.commit()
+                                            set_transaction_dialog("Transport Request Added", f"Daily transit dispatch (Trip D) created for date {o_date}.", "success")
+                                        else:
+                                            set_transaction_dialog("Already Exists", f"A Trip D transit dispatch for date {o_date} already exists.", "info")
+                                        conn.close()
+                                    except Exception as e:
+                                        set_transaction_dialog("Action Unsuccessful", f"Failed: {str(e)}", "error")
+                                    st.rerun()
+                            else:
+                                st.text("Past date")
                         with o_col4:
                             if st.button("🗑️ Remove", key=f"del_ot_{o_id}", type="primary"):
                                 try:
