@@ -755,7 +755,7 @@ nav_selection = st.sidebar.radio(
         "📅 Daily Transit Dispatch Setup",
         "🏢 Meeting Rooms",
         "📢 Site News",
-        "🛠️️ System Administration"
+        "🛠️ System Administration"
     ]
 )
 
@@ -769,8 +769,26 @@ if st.sidebar.button("Logout Profile"):
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# 1. HOME & OVERVIEW (Passenger List Layout with Logo Banners & White Background Table Styling)
+# 1. HOME & OVERVIEW (Passenger List Layout with Sticky Frozen Header & White Background Table Styling)
 if nav_selection == "🏠 Home & Overview (Passenger List)":
+    # Frozen Header Wrapper (Sticky top like Excel freeze pane)
+    st.markdown(
+        """
+        <style>
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 999;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #1F4E78;
+        }
+        </style>
+        <div class="sticky-header">
+        """,
+        unsafe_allow_html=True
+    )
+
     h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
     with h_col1:
         if os.path.exists(LOGO1_PATH):
@@ -790,7 +808,9 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
         if os.path.exists(LOGO2_PATH):
             st.image(LOGO2_PATH, width=140)
 
-    st.markdown("---")
+    st.markdown("</div>", unsafe_allow_html=True) # End sticky header wrapper
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     conn = get_db_connection()
     home_unrolled_df = pd.read_sql_query('''
