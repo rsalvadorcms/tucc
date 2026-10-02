@@ -25,16 +25,6 @@ try:
 except ImportError:
     HAS_REPORTLAB = False
 
-# Optional import for PDF rendering
-try:
-    from reportlab.lib.pagesizes import A4, portrait
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    HAS_REPORTLAB = True
-except ImportError:
-    HAS_REPORTLAB = False
-
 # Set page configurations with native default theme formatting
 st.set_page_config(page_title="Office Operations Portal", layout="wide")
 
