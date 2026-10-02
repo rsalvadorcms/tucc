@@ -1663,9 +1663,14 @@ elif nav_selection == "📢 Site News":
                     st.markdown("---")
                     st.markdown(f"#### 🔎 Previewing: {title} (`{filename}`)")
                     if file_type == "pdf":
+                        # Chrome-compatible embed container with explicit PDF data-uri
                         encoded_pdf_data = base64.b64encode(file_bytes).decode("utf-8")
-                        pdf_html = f'<object data="data:application/pdf;base64,{encoded_pdf_data}" type="application/pdf" width="100%" height="600px"><p>Your web browser does not support inline PDF previews. Please use the download button above.</p></object>'
-                        st.markdown(pdf_html, unsafe_allow_html=True)
+                        pdf_embed_html = f'''
+                        <div style="width: 100%; height: 600px; border: 1px solid #BFBFBF; border-radius: 4px; overflow: hidden;">
+                            <embed src="data:application/pdf;base64,{encoded_pdf_data}" type="application/pdf" width="100%" height="100%" />
+                        </div>
+                        '''
+                        st.markdown(pdf_embed_html, unsafe_allow_html=True)
                     elif file_type == "png":
                         st.image(file_bytes, caption=filename, use_container_width=True)
 
@@ -1691,7 +1696,7 @@ elif nav_selection == "📢 Site News":
 elif nav_selection == "🛠️ System Administration":
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
-        st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
+        st.error("🛡️️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
