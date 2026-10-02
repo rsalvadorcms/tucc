@@ -1012,7 +1012,7 @@ with tab3:
         st.header("Admin Control Dashboard Engine")
         
         st.markdown("---")
-        st.subheader("💾 Database Backups & Disaster Recovery")
+        st.subheader("💾 Database Backups, Restores & Disaster Recovery")
         b_col1, b_col2 = st.columns(2)
         with b_col1:
             if st.button("🔄 Trigger Manual Backup Now"):
@@ -1028,6 +1028,28 @@ with tab3:
                         st.download_button(f"📥 Download Selected Backup ({selected_backup})", data=f, file_name=selected_backup, mime="application/octet-stream")
             else:
                 st.info("No backup snapshots found yet.")
+
+        # --- DATABASE RESTORE / UPLOAD SECTION ---
+        with st.expander("📥 Restore Database from Backup File (.db)", expanded=False):
+            st.warning("⚠️ **Caution:** Uploading and restoring a database backup will overwrite the current live database file (`office_operations.db`). A safety backup of your current database will be created automatically before the restore takes place.")
+            uploaded_db_file = st.file_uploader("Upload Database Backup (.db)", type=["db"])
+            
+            if uploaded_db_file is not None:
+                if st.button("🚀 Confirm and Restore Database", type="primary"):
+                    try:
+                        # Create safety backup of current db first
+                        if os.path.exists(DB_FILE):
+                            safety_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            shutil.copy2(DB_FILE, os.path.join(BACKUP_DIR, f"pre_restore_safety_{safety_timestamp}.db"))
+                        
+                        # Overwrite active database file with uploaded file
+                        with open(DB_FILE, "wb") as f:
+                            f.write(uploaded_db_file.getbuffer())
+                            
+                        set_transaction_dialog("Database Restored Successfully", "The database has been successfully replaced and restored from the backup file.", "success")
+                    except Exception as e:
+                        set_transaction_dialog("Restore Unsuccessful", f"Failed to restore database: {str(e)}", "error")
+                    st.rerun()
 
         st.markdown("---")
         st.subheader("📤 Bulk Import Data via Excel (.xlsx)")
