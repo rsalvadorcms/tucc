@@ -1620,8 +1620,12 @@ elif nav_selection == "📢 Site News":
     conn.close()
     
     if not news_df.empty:
+        if "active_news_preview" not in st.session_state:
+            st.session_state.active_news_preview = None
+
         for _, row in news_df.iterrows():
             news_id, title, filename, file_path, file_type, uploaded_by, upload_date = row['id'], row['title'], row['filename'], row['file_path'], row['file_type'], row['uploaded_by'], row['upload_date']
+            file_exists = os.path.exists(file_path)
             
             with st.container(border=True):
                 col_info, col_action = st.columns([3, 1])
@@ -1629,26 +1633,53 @@ elif nav_selection == "📢 Site News":
                     st.markdown(f"### 📌 {title}")
                     st.caption(f"📅 Published: **{upload_date}** | 👤 By: **{uploaded_by}** | 📄 File: `{filename}`")
                 with col_action:
-                    if os.path.exists(file_path):
+                    if file_exists:
                         with open(file_path, "rb") as f:
                             file_bytes = f.read()
+                        
+                        is_currently_previewed = (st.session_state.active_news_preview == news_id)
+                        prev_btn_label = "❌ Close Preview" if is_currently_previewed else "👁️ Preview"
+                        
+                        if st.button(prev_btn_label, key=f"prev_news_{news_id}", use_container_width=True):
+                            if is_currently_previewed:
+                                st.session_state.active_news_preview = None
+                            else:
+                                st.session_state.active_news_preview = news_id
+                            st.rerun()
+
                         st.download_button(
-                            label=f"📥 View / Download ({file_type.upper()})",
+                            label=f"📥 Download ({file_type.upper()})",
                             data=file_bytes, file_name=filename,
                             mime="application/pdf" if file_type == "pdf" else "image/png",
-                            key=f"dl_news_{news_id}"
+                            key=f"dl_news_{news_id}",
+                            use_container_width=True
                         )
                     else:
+                        st.button("👁️ Preview", key=f"prev_news_dis_{news_id}", disabled=True, use_container_width=True)
                         st.error("File missing.")
+
+                if st.session_state.active_news_preview == news_id and file_exists:
+                    st.markdown("---")
+                    st.markdown(f"#### 🔎 Previewing: {title} (`{filename}`)")
+                    if file_type == "pdf":
+                        import base64
+                        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
+                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" type="application/pdf"></iframe>'
+                        st.markdown(pdf_display, unsafe_allow_html=True)
+                    elif file_type == "png":
+                        st.image(file_bytes, caption=filename, use_container_width=True)
+
                 if is_admin_or_owner:
                     if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}"):
                         try:
-                            if os.path.exists(file_path):
+                            if file_exists:
                                 os.remove(file_path)
                             conn = get_db_connection()
                             conn.execute("DELETE FROM site_news WHERE id = ?", (news_id,))
                             conn.commit()
                             conn.close()
+                            if st.session_state.active_news_preview == news_id:
+                                st.session_state.active_news_preview = None
                             set_transaction_dialog("Deletion Successful", "Bulletin deleted.", "success")
                         except Exception as e:
                             set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1763,7 +1794,7 @@ elif nav_selection == "🛠️ System Administration":
         
         is_owner = (current_role == "Owner")
         if is_owner:
-            table_df.insert(0, "🗑️ Delete", False)
+            table_df.insert(0, "🗑️️ Delete", False)
             column_config = {
                 "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
             }
@@ -1788,7 +1819,7 @@ elif nav_selection == "🛠️ System Administration":
                 
                 rows_to_save = edited_df.copy()
                 if is_owner and "🗑️ Delete" in rows_to_save.columns:
-                    rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
+                    rows_to_save = rows_to_save[rows_to_save["🗑️️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
                 
                 for _, row in rows_to_save.iterrows():
