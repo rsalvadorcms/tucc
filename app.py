@@ -751,8 +751,50 @@ if st.sidebar.button("Logout Profile"):
     st.session_state.emp_name = ""
     st.rerun()
 
-tabs = ["⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "📢 Site News", "🛠️ System Administration"]
-tab1, tab1_b, tab1_c, tab2, tab_news, tab3 = st.tabs(tabs)
+tabs = ["🏠 Home & Overview", "⏰ Overtime & Transport", "👥 Transit Groups & Passengers", "📅 Daily Transit Dispatch", "🏢 Meeting Rooms", "📢 Site News", "🛠️ System Administration"]
+tab_home, tab1, tab1_b, tab1_c, tab2, tab_news, tab3 = st.tabs(tabs)
+
+# --- HOME & OVERVIEW LANDING PAGE ---
+with tab_home:
+    st.header("🏢 Office Operations Portal - Home & Overview")
+    st.subheader("TUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]")
+    st.markdown("### Daily Transportation Arrangement - Passenger List Overview")
+    st.caption("This landing page displays the live configured transit groups and passenger allocations matching your official export layout.")
+
+    conn = get_db_connection()
+    home_unrolled_df = pd.read_sql_query('''
+        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
+               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
+        FROM transit_groups tg
+        LEFT JOIN cars c ON tg.group_name = c.car_name
+        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        ORDER BY tg.group_name
+    ''', conn)
+    conn.close()
+
+    if not home_unrolled_df.empty:
+        # Format the vehicle description column to match Excel layout exactly (Vehicle Model, Plate, Color)
+        display_home_df = home_unrolled_df.copy()
+        display_home_df["Vehicle Description"] = display_home_df.apply(
+            lambda r: f"{r['Vehicle Model'] or 'Standard Vehicle'} | {r['Plate Number'] or 'N/A'} | Color: {r['Color'] or 'Black'}",
+            axis=1
+        )
+        
+        # Select and order columns identical to export format
+        formatted_view_df = display_home_df[[
+            "Car Group", "Vehicle Description", "Driver Name", "Contact Number", "Passenger Name", "ETD 1 (From)", "ETD 2 (To)"
+        ]].rename(columns={
+            "Car Group": "Group",
+            "Passenger Name": "Passenger",
+            "ETD 1 (From)": "ETD 1",
+            "ETD 2 (To)": "ETD 2"
+        })
+        
+        st.dataframe(formatted_view_df, use_container_width=True)
+    else:
+        st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' to set them up.")
 
 # --- TAB 1: OVERTIME REQUESTS ---
 with tab1:
@@ -1468,7 +1510,7 @@ with tab3:
         
         conn = get_db_connection()
         table_df = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
-        original_passwords = dict(zip(table_df["username"], table_df["password"])) if selected_table == "users" else {}
+        original_passusers = dict(zip(table_df["username"], table_df["password"])) if selected_table == "users" else {}
         if selected_table == "users":
             table_df["password"] = "••••••••"
         
@@ -1505,7 +1547,7 @@ with tab3:
                 cursor.execute(f"DELETE FROM {selected_table}")
                 
                 rows_to_save = edited_df.copy()
-                if is_owner and "🗑️ Delete" in rows_to_save.columns:
+                if is_owner and "🗑️️ Delete" in rows_to_save.columns:
                     # Filter out rows marked for deletion (Owner only)
                     rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
@@ -1513,7 +1555,7 @@ with tab3:
                 for _, row in rows_to_save.iterrows():
                     row_dict = row.to_dict()
                     if selected_table == "users" and row_dict.get("password") == "••••••••":
-                        row_dict["password"] = original_passwords.get(row_dict.get("username"), "")
+                        row_dict["password"] = original_passusers.get(row_dict.get("username"), "")
                     cols = [k for k in row_dict.keys() if row_dict[k] is not None and str(row_dict[k]) != "nan"]
                     cursor.execute(f"INSERT INTO {selected_table} ({', '.join(cols)}) VALUES ({', '.join(['?']*len(cols))})", [row_dict[k] for k in cols])
                 
