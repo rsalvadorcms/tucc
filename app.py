@@ -743,13 +743,26 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Highlighted Tabs)
+# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Left-Aligned, Highlighted Tabs)
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📌 Navigation")
+
+# CSS injection to left-align text inside Streamlit sidebar buttons without altering font weight/size
+st.sidebar.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] button {
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 nav_options = [
     "🏠 Daily Transportation Arrangement",
@@ -759,21 +772,20 @@ nav_options = [
     "📅 Daily Transit Dispatch Setup",
     "🏢 Meeting Rooms",
     "📢 Site News",
-    "🛠️ System Administration"
+    "🛠️️ System Administration"
 ]
 
 if 'nav_selection' not in st.session_state:
     st.session_state.nav_selection = nav_options[0]
 
-# Render interactive custom navigation buttons with light-yellow active highlight
+# Render interactive custom navigation items with light-yellow active highlight and left alignment
 for opt in nav_options:
     is_active = (st.session_state.nav_selection == opt)
-    btn_type = "primary" if is_active else "secondary"
     
     if is_active:
         st.sidebar.markdown(
             f"""
-            <div style="background-color: #FFF2CC; border-left: 5px solid #1F4E78; padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; font-weight: bold; color: #1F4E78;">
+            <div style="background-color: #FFF2CC; border-left: 5px solid #1F4E78; padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; text-align: left;">
                 {opt}
             </div>
             """,
