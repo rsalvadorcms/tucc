@@ -289,13 +289,14 @@ def export_custom_batam_excel(detailed_df, effective_date_str=""):
     ws2.row_dimensions[3].height = 20
     ws2.row_dimensions[4].height = 20
 
-    cell_e5 = ws2.cell(row=5, column=5, value="Effective Date:")
-    cell_e5.font = font_bold_label
-    cell_e5.alignment = Alignment(horizontal="right", vertical="center")
-    
-    cell_f5 = ws2.cell(row=5, column=6, value=effective_date_str)
-    cell_f5.font = font_bold_label
-    cell_f5.alignment = Alignment(horizontal="center", vertical="center")
+    if effective_date_str:
+        cell_e5 = ws2.cell(row=5, column=5, value="Effective Date:")
+        cell_e5.font = font_bold_label
+        cell_e5.alignment = Alignment(horizontal="right", vertical="center")
+        
+        cell_f5 = ws2.cell(row=5, column=6, value=effective_date_str)
+        cell_f5.font = font_bold_label
+        cell_f5.alignment = Alignment(horizontal="center", vertical="center")
 
     start_row = 6
     ws2.merge_cells("B2:D4")
@@ -405,11 +406,12 @@ def export_custom_batam_pdf(detailed_df, effective_date_str=""):
     story.append(top_table)
     story.append(Spacer(1, 10))
     
-    eff_p = Paragraph(f"<b>Effective Date:</b> {effective_date_str}", eff_date_style)
-    eff_table = Table([[Paragraph("", cell_style), eff_p]], colWidths=[550, 230])
-    eff_table.setStyle(TableStyle([('ALIGN', (1,0), (1,0), 'RIGHT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
-    story.append(eff_table)
-    story.append(Spacer(1, 8))
+    if effective_date_str:
+        eff_p = Paragraph(f"<b>Effective Date:</b> {effective_date_str}", eff_date_style)
+        eff_table = Table([[Paragraph("", cell_style), eff_p]], colWidths=[550, 230])
+        eff_table.setStyle(TableStyle([('ALIGN', (1,0), (1,0), 'RIGHT'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        story.append(eff_table)
+        story.append(Spacer(1, 8))
     
     headers = ["Vehicle Description", "Driver Name", "Contact Number", "Passenger", "ETD 1", "ETD 2"]
     table_data = [[Paragraph(h, header_style) for h in headers]]
@@ -753,7 +755,7 @@ nav_selection = st.sidebar.radio(
         "📅 Daily Transit Dispatch Setup",
         "🏢 Meeting Rooms",
         "📢 Site News",
-        "🛠️ System Administration"
+        "🛠️️ System Administration"
     ]
 )
 
@@ -769,7 +771,6 @@ if st.sidebar.button("Logout Profile"):
 
 # 1. HOME & OVERVIEW (Passenger List Layout with Logo Banners & White Background Table Styling)
 if nav_selection == "🏠 Home & Overview (Passenger List)":
-    # Header Section with Logos & Title matching Excel layout
     h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
     with h_col1:
         if os.path.exists(LOGO1_PATH):
@@ -790,11 +791,6 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
             st.image(LOGO2_PATH, width=140)
 
     st.markdown("---")
-    
-    col_lbl, col_date = st.columns([3, 1])
-    with col_date:
-        home_effective_date = st.date_input("Effective Date", value=date.today(), key="home_eff_date")
-        home_eff_date_str = home_effective_date.strftime("%Y-%m-%d")
 
     conn = get_db_connection()
     home_unrolled_df = pd.read_sql_query('''
@@ -816,12 +812,10 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
             axis=1
         )
         
-        # Build clean merged-group HTML table representation to mimic the exact Excel layout visually with white background
         html_table_rows = ""
         current_group = None
         group_rowspan_counts = display_home_df['Car Group'].value_counts()
         
-        # We will iterate and render HTML rows with rowspan for shared group properties
         rendered_groups = set()
         for _, row in display_home_df.iterrows():
             g_name = row['Car Group']
@@ -853,7 +847,6 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
 
         full_custom_html = f"""
         <div style="background-color: white; padding: 15px; border-radius: 5px;">
-            <div style="text-align: right; font-weight: bold; margin-bottom: 10px; color: black;">Effective Date: {home_eff_date_str}</div>
             <table style="width: 100%; border-collapse: collapse; background-color: white; color: black; font-family: Calibri, sans-serif; font-size: 14px;">
                 <thead>
                     <tr style="background-color: #1F4E78; color: white; text-align: center;">
@@ -930,7 +923,7 @@ elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
             d_val = row['Driver']
             t_no = row['Trip No.']
             r_y1 = row['Route (Yard-1)']
-            r_y3 = row['Route (Yard-2)' if 'Route (Yard-2)' in row else 'Route (Yard-3)']
+            r_y3 = row['Route (Yard-3)']
             rem = row['Remarks']
             
             shuttle_rows_html += "<tr>"
