@@ -771,7 +771,6 @@ if st.sidebar.button("Logout Profile"):
 
 # 1. HOME & OVERVIEW (Passenger List Layout with Excel-like Freeze Pane Scroll Container)
 if nav_selection == "🏠 Home & Overview (Passenger List)":
-    # Custom CSS wrapping a fixed height scrollable viewport with a sticky header table
     st.markdown(
         """
         <style>
@@ -910,8 +909,49 @@ if nav_selection == "🏠 Home & Overview (Passenger List)":
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
 
-# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format - Trips A, B, C with Logo Banners & White Background Table Styling)
+# 2. SCHEDULED TRANSIT DISPATCHES (Shuttle Format with Excel-like Freeze Pane Scroll Container)
 elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
+    st.markdown(
+        """
+        <style>
+        .freeze-pane-container {
+            max-height: 700px;
+            overflow-y: auto;
+            border: 1px solid #BFBFBF;
+            border-radius: 5px;
+            background-color: white;
+            padding: 10px;
+        }
+        .freeze-pane-container table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            color: black;
+            font-family: Calibri, sans-serif;
+            font-size: 14px;
+        }
+        .freeze-pane-container th {
+            position: sticky;
+            top: 0;
+            background-color: #1F4E78;
+            color: white;
+            text-align: center;
+            border: 1px solid #BFBFBF;
+            padding: 10px;
+            z-index: 5;
+        }
+        .freeze-pane-container td {
+            border: 1px solid #BFBFBF;
+            text-align: center;
+            vertical-align: middle;
+            padding: 8px;
+            background-color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
     with h_col1:
         if os.path.exists(LOGO1_PATH):
@@ -970,31 +1010,31 @@ elif nav_selection == "📅 Scheduled Transit Dispatches (Shuttle Format)":
             
             shuttle_rows_html += "<tr>"
             if idx == 0:
-                shuttle_rows_html += f"<td rowspan='{total_rows_count}' style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 10px; font-weight: bold;'>MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY</td>"
+                shuttle_rows_html += f"<td rowspan='{total_rows_count}' style='font-weight: bold;'>MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY</td>"
             
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{u_val}</td>"
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{d_val}</td>"
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{t_no}</td>"
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{r_y1}</td>"
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{r_y3}</td>"
-            shuttle_rows_html += f"<td style='background-color: white; border: 1px solid #BFBFBF; text-align: center; vertical-align: middle; padding: 8px;'>{rem}</td>"
+            shuttle_rows_html += f"<td>{u_val}</td>"
+            shuttle_rows_html += f"<td>{d_val}</td>"
+            shuttle_rows_html += f"<td>{t_no}</td>"
+            shuttle_rows_html += f"<td>{r_y1}</td>"
+            shuttle_rows_html += f"<td>{r_y3}</td>"
+            shuttle_rows_html += f"<td>{rem}</td>"
             shuttle_rows_html += "</tr>"
 
         full_shuttle_html = f"""
-        <div style="background-color: white; padding: 15px; border-radius: 5px;">
-            <table style="width: 100%; border-collapse: collapse; background-color: white; color: black; font-family: Calibri, sans-serif; font-size: 14px;">
+        <div class="freeze-pane-container">
+            <table>
                 <thead>
-                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
-                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">Days (s)</th>
-                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">UNIT</th>
-                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">DRIVER</th>
-                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">TRIP NO.</th>
-                        <th colspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">ROUTE</th>
-                        <th rowspan="2" style="border: 1px solid #BFBFBF; padding: 10px;">REMARKS</th>
+                    <tr>
+                        <th rowspan="2" style="top: 0; z-index: 6;">Days (s)</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">UNIT</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">DRIVER</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">TRIP NO.</th>
+                        <th colspan="2" style="top: 0; z-index: 6;">ROUTE</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">REMARKS</th>
                     </tr>
-                    <tr style="background-color: #1F4E78; color: white; text-align: center;">
-                        <th style="border: 1px solid #BFBFBF; padding: 8px;">YARD - 1</th>
-                        <th style="border: 1px solid #BFBFBF; padding: 8px;">YARD - 3</th>
+                    <tr>
+                        <th style="top: 41px; background-color: #245888; z-index: 5;">YARD - 1</th>
+                        <th style="top: 41px; background-color: #245888; z-index: 5;">YARD - 3</th>
                     </tr>
                 </thead>
                 <tbody>
