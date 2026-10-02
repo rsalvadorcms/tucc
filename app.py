@@ -1662,10 +1662,9 @@ elif nav_selection == "📢 Site News":
                     st.markdown("---")
                     st.markdown(f"#### 🔎 Previewing: {title} (`{filename}`)")
                     if file_type == "pdf":
-                        import base64
-                        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
-                        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" type="application/pdf"></iframe>'
-                        st.markdown(pdf_display, unsafe_allow_html=True)
+                        # Render PDF using a robust object/embed tag supported across browsers
+                        pdf_html = f'<object data="data:application/pdf;base64,{import_base64 := __import__("base64").b64encode(file_bytes).decode("utf-8")}" type="application/pdf" width="100%" height="600px"><p>Your web browser does not support inline PDF previews. Please use the download button above.</p></object>'
+                        st.markdown(pdf_html, unsafe_allow_html=True)
                     elif file_type == "png":
                         st.image(file_bytes, caption=filename, use_container_width=True)
 
@@ -1794,9 +1793,9 @@ elif nav_selection == "🛠️ System Administration":
         
         is_owner = (current_role == "Owner")
         if is_owner:
-            table_df.insert(0, "🗑️️ Delete", False)
+            table_df.insert(0, "🗑️ Delete", False)
             column_config = {
-                "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
+                "🗑️️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
             }
         else:
             column_config = {}
@@ -1819,7 +1818,7 @@ elif nav_selection == "🛠️ System Administration":
                 
                 rows_to_save = edited_df.copy()
                 if is_owner and "🗑️ Delete" in rows_to_save.columns:
-                    rows_to_save = rows_to_save[rows_to_save["🗑️️ Delete"] != True]
+                    rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
                 
                 for _, row in rows_to_save.iterrows():
