@@ -477,8 +477,8 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         top=Side(style='thin', color='BFBFBF'), bottom=Side(style='thin', color='BFBFBF')
     )
 
-    for r in range(1, 15):
-        for c in range(1, 10):
+    for r in range(1, 20):
+        for c in range(1, 9):
             ws.cell(row=r, column=c).fill = white_fill
 
     ws.merge_cells("B2:G3")
@@ -503,6 +503,7 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         except Exception:
             pass
 
+    # Table Header Rows (Row 5 & 6)
     ws.merge_cells("A5:A6")
     ws["A5"] = "Days (s)"
     
@@ -515,11 +516,13 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
     ws.merge_cells("D5:D6")
     ws["D5"] = "TRIP NO."
 
-    ws.merge_cells("E5:G5")
+    ws.merge_cells("E5:F5")
     ws["E5"] = "ROUTE"
     ws["E6"] = "YARD - 1"
     ws["F6"] = "YARD - 3"
-    ws["G6"] = "YARD - 1"
+
+    ws.merge_cells("G5:G6")
+    ws["G5"] = ""
 
     ws.merge_cells("H5:H6")
     ws["H5"] = "REMARKS"
@@ -534,17 +537,18 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
             cell.border = thin_border
 
     start_row = 7
-    for idx, row in enumerate(df.iterrows(), start=start_row):
+    sorted_df = df.sort_values(by="ETD Start") if "ETD Start" in df.columns else df
+    
+    for idx, row in enumerate(sorted_df.iterrows(), start=start_row):
         r_val = row[1]
-        days_val = str(r_val.get("Days", "MONDAY - SATURDAY"))
         unit_val = str(r_val.get("Unit", "TOYOTA HI-ACE"))
         driver_val = str(r_val.get("Driver", "TBA"))
-        trip_no = str(r_val.get("Trip No", "1st"))
+        trip_no = f"{idx - start_row + 1}st" if (idx - start_row + 1) == 1 else f"{idx - start_row + 1}nd" if (idx - start_row + 1) == 2 else f"{idx - start_row + 1}rd" if (idx - start_row + 1) == 3 else f"{idx - start_row + 1}th"
         etd1 = str(r_val.get("ETD Start", ""))
         etd2 = str(r_val.get("ETD Return", ""))
         remarks = str(r_val.get("Remarks", "DROP-OFF"))
 
-        row_values = [days_val, unit_val, driver_val, trip_no, etd1, etd2, "", remarks]
+        row_values = ["", unit_val, driver_val, trip_no, etd1, etd2, "", remarks]
         ws.row_dimensions[idx].height = 20
         for c_idx, val in enumerate(row_values, start=1):
             cell = ws.cell(row=idx, column=c_idx, value=val)
@@ -552,7 +556,17 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
             cell.border = thin_border
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    col_widths = {'A': 18, 'B': 18, 'C': 16, 'D': 12, 'E': 15, 'F': 15, 'G': 15, 'H': 15}
+    total_rows = len(sorted_df)
+    if total_rows > 0:
+        end_row = start_row + total_rows - 1
+        ws.merge_cells(start_row=start_row, start_column=1, end_row=end_row, end_column=1)
+        days_cell = ws.cell(row=start_row, column=1)
+        days_cell.value = "MONDAY\nTUESDAY\nWEDNESDAY\nTHURSDAY\nFRIDAY\nSATURDAY"
+        days_cell.font = font_data
+        days_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        days_cell.border = thin_border
+
+    col_widths = {'A': 18, 'B': 18, 'C': 16, 'D': 12, 'E': 14, 'F': 14, 'G': 10, 'H': 16}
     for col_letter, width in col_widths.items():
         ws.column_dimensions[col_letter].width = width
 
@@ -869,7 +883,7 @@ with tab1:
         
         # --- OVERTIME RECORD MANAGEMENT EXPANDER (Admin & Owner Only) ---
         if st.session_state.role in ["Admin", "Owner"]:
-            with st.expander("✏️️ Manage / Remove Overtime Submissions"):
+            with st.expander("✏ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
                 ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
                 conn.close()
@@ -1154,10 +1168,12 @@ with tab1_c:
                t.trip || ' (' || t.trip_name || ')' AS trip_display, 
                dt.trip AS trip_code,
                dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
-               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily,
+               tg.driver_name
         FROM daily_transit dt 
         LEFT JOIN cars c ON dt.group_name = c.car_name
         LEFT JOIN trips t ON dt.trip = t.trip
+        LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
         ORDER BY dt.transit_date_start DESC, dt.id DESC
     ''', conn)
     conn.close()
@@ -1171,11 +1187,9 @@ with tab1_c:
         # --- SHUTTLE TIMETABLE EXCEL EXPORT (Trips A, B, C filtered & formatted) ---
         shuttle_export_df = daily_raw_df[daily_raw_df['trip_code'].isin(['Trip A', 'Trip B', 'Trip C'])].copy()
         if not shuttle_export_df.empty:
-            shuttle_export_df['Days'] = shuttle_export_df.apply(lambda r: f"{r['transit_date_start']}" if r['transit_date_start'] == r['transit_date_end'] else f"{r['transit_date_start']} to {r['transit_date_end']}", axis=1)
             shuttle_export_df['Unit'] = shuttle_export_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
-            shuttle_export_df['Driver'] = "TBA"
-            shuttle_export_df['Trip No'] = shuttle_export_df['trip_code']
-            shuttle_export_df['Remarks'] = "DROP-OFF"
+            shuttle_export_df['Driver'] = shuttle_export_df['driver_name'].fillna("TBA")
+            shuttle_export_df['Remarks'] = "DROP-OFF / PICK-UP"
             
             st.download_button(
                 "📥 Export Shuttle Timetable Excel (Trips A, B, C)", 
@@ -1358,7 +1372,7 @@ with tab_news:
 with tab3:
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
-        st.error("🛡️️ Restricted Access Control: Admin or Owner clearance required.")
+        st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
         
@@ -1445,7 +1459,7 @@ with tab3:
                 st.error(f"Error: {str(e)}")
 
         st.markdown("---")
-        st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
+        st.subheader("🗃️ Master Data Tables Inline CRUD Editor & Deletion Support")
         selected_table = st.selectbox("Choose Database Table to Manage", ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit", "site_news"])
         
         conn = get_db_connection()
@@ -1460,7 +1474,12 @@ with tab3:
         emp_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL").fetchall()]
         conn.close()
         
-        column_config = {}
+        # Add deletion checkbox column to enable direct row deletion in data_editor
+        table_df.insert(0, "🗑️ Delete", False)
+        
+        column_config = {
+            "🗑️ Delete": st.column_config.CheckboxColumn("Delete?", help="Check to delete this specific row", default=False)
+        }
         if selected_table == "transit_groups":
             column_config["group_name"] = st.column_config.SelectboxColumn("Group Name", options=cars_list)
             column_config["driver_name"] = st.column_config.SelectboxColumn("Driver Name", options=drivers_list)
@@ -1469,20 +1488,29 @@ with tab3:
             column_config["passengers"] = st.column_config.SelectboxColumn("Passenger", options=emp_list)
 
         edited_df = st.data_editor(table_df, num_rows="dynamic", use_container_width=True, column_config=column_config, key=f"editor_{selected_table}")
-        if st.button(f"Save Grid Changes ({selected_table})"):
+        
+        if st.button(f"Save Grid Changes & Delete Selected ({selected_table})"):
             try:
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute(f"DELETE FROM {selected_table}")
-                for _, row in edited_df.iterrows():
+                
+                # Filter out rows marked for deletion
+                rows_to_save = edited_df[edited_df["🗑️ Delete"] != True].copy()
+                if "🗑️ Delete" in rows_to_save.columns:
+                    rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
+                
+                for _, row in rows_to_save.iterrows():
                     row_dict = row.to_dict()
                     if selected_table == "users" and row_dict.get("password") == "••••••••":
                         row_dict["password"] = original_passwords.get(row_dict.get("username"), "")
-                    cols = [k for k in row_dict.keys() if row_dict[k] is not None]
+                    # Remove auto-increment or null keys if needed
+                    cols = [k for k in row_dict.keys() if row_dict[k] is not None and str(row_dict[k]) != "nan"]
                     cursor.execute(f"INSERT INTO {selected_table} ({', '.join(cols)}) VALUES ({', '.join(['?']*len(cols))})", [row_dict[k] for k in cols])
+                
                 conn.commit()
                 conn.close()
-                set_transaction_dialog("Data Transaction Successful", f"Table '{selected_table}' updated.", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Table '{selected_table}' updated and deletions processed.", "success")
             except Exception as e:
                 set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
