@@ -743,7 +743,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Left-Aligned, Highlighted Tabs)
+# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Mobile Optimized & Left-Aligned)
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
@@ -751,13 +751,47 @@ st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 st.sidebar.markdown("---")
 st.sidebar.subheader("📌 Navigation")
 
-# CSS injection to left-align text inside Streamlit sidebar buttons without altering font weight/size
+# Mobile Responsiveness & Left-Aligned Sidebar CSS
 st.sidebar.markdown(
     """
     <style>
+    /* Force strict left alignment on all sidebar buttons and child elements */
     [data-testid="stSidebar"] button {
+        display: flex !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
+        width: 100% !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+    }
+    [data-testid="stSidebar"] button p, 
+    [data-testid="stSidebar"] button div,
+    [data-testid="stSidebar"] button span {
         text-align: left !important;
         justify-content: flex-start !important;
+        width: 100% !important;
+    }
+
+    /* Mobile Enhancements (Screens <= 768px) */
+    @media (max-width: 768px) {
+        .freeze-pane-container {
+            max-height: 450px !important;
+        }
+        h1 {
+            font-size: 1.4rem !important;
+        }
+        h2 {
+            font-size: 1.2rem !important;
+        }
+        h3 {
+            font-size: 1.05rem !important;
+        }
+        .stButton button {
+            width: 100% !important;
+            margin-bottom: 4px !important;
+            font-size: 14px !important;
+            padding: 8px 12px !important;
+        }
     }
     </style>
     """,
@@ -772,7 +806,7 @@ nav_options = [
     "📅 Daily Transit Dispatch Setup",
     "🏢 Meeting Rooms",
     "📢 Site News",
-    "🛠️️ System Administration"
+    "🛠️ System Administration"
 ]
 
 if 'nav_selection' not in st.session_state:
@@ -785,7 +819,7 @@ for opt in nav_options:
     if is_active:
         st.sidebar.markdown(
             f"""
-            <div style="background-color: #FFF2CC; border-left: 5px solid #1F4E78; padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; text-align: left;">
+            <div style="background-color: #FFF2CC; border-left: 5px solid #1F4E78; padding: 10px 12px; margin-bottom: 6px; border-radius: 4px; text-align: left;">
                 {opt}
             </div>
             """,
