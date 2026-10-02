@@ -40,7 +40,7 @@ if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
 # ==============================================================================
-# ⚙️️ 1. HELPER FUNCTIONS & DATABASE ENGINE
+# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
@@ -478,10 +478,10 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
     )
 
     for r in range(1, 20):
-        for c in range(1, 9):
+        for c in range(1, 8):
             ws.cell(row=r, column=c).fill = white_fill
 
-    ws.merge_cells("B2:G3")
+    ws.merge_cells("B2:F3")
     title_cell = ws["B2"]
     title_cell.value = "JGC SHUTTLE TIMETABLE\nTUCC PROJECT - BATAM MODULE YARD [MD-1 & MD-4]"
     title_cell.font = font_title
@@ -499,11 +499,11 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         try:
             img2 = OpenpyxlImage(LOGO2_PATH)
             img2.width = 120; img2.height = 45
-            ws.add_image(img2, "H2")
+            ws.add_image(img2, "G2")
         except Exception:
             pass
 
-    # Table Header Rows (Row 5 & 6)
+    # Table Header Rows (Row 5 & 6) (7 Columns total: A through G)
     ws.merge_cells("A5:A6")
     ws["A5"] = "Days (s)"
     
@@ -522,14 +522,11 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
     ws["F6"] = "YARD - 3"
 
     ws.merge_cells("G5:G6")
-    ws["G5"] = ""
-
-    ws.merge_cells("H5:H6")
-    ws["H5"] = "REMARKS"
+    ws["G5"] = "REMARKS"
 
     for r in [5, 6]:
         ws.row_dimensions[r].height = 22
-        for col in range(1, 9):
+        for col in range(1, 8):
             cell = ws.cell(row=r, column=col)
             cell.font = font_header
             cell.fill = header_fill
@@ -548,7 +545,7 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         etd2 = str(r_val.get("ETD Return", ""))
         remarks = str(r_val.get("Remarks", "DROP-OFF"))
 
-        row_values = ["", unit_val, driver_val, trip_no, etd1, etd2, "", remarks]
+        row_values = ["", unit_val, driver_val, trip_no, etd1, etd2, remarks]
         ws.row_dimensions[idx].height = 20
         for c_idx, val in enumerate(row_values, start=1):
             cell = ws.cell(row=idx, column=c_idx, value=val)
@@ -566,7 +563,11 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
         days_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         days_cell.border = thin_border
 
-    col_widths = {'A': 18, 'B': 18, 'C': 16, 'D': 12, 'E': 14, 'F': 14, 'G': 10, 'H': 16}
+    # Calculate optimal width for Column B based on content length
+    max_unit_len = max([len(str(r.get("Unit", ""))) for _, r in sorted_df.iterrows()] + [4], default=18)
+    col_width_b = max(max_unit_len + 4, 22)
+
+    col_widths = {'A': 18, 'B': col_width_b, 'C': 16, 'D': 12, 'E': 14, 'F': 14, 'G': 18}
     for col_letter, width in col_widths.items():
         ws.column_dimensions[col_letter].width = width
 
