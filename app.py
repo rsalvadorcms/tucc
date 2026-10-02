@@ -465,7 +465,7 @@ def init_db():
 
     cursor.execute("SELECT COUNT(*) FROM trips")
     if cursor.fetchone()[0] == 0:
-        for t_code, t_desc in [("Trip A", "Yard to Yard"), ("Trip B", "Sunday Panbil - Wasco - Panbil"), ("Trip C", "Panbil - Destination - Panbil")]:
+        for t_code, t_desc in [("Trip A", "Yard to Yard"), ("Trip B", "Sunday Panbil - Wasco - Panbil"), ("Trip C", "Panbil - Destination - Panbil"), ("Trip D", "Overtime Dispatch Route")]:
             cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (?, ?)", (t_code, t_desc))
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
@@ -563,10 +563,20 @@ with tab1:
         all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
     logged_in_emp = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
 
+    # Calculate allowed dates: Today and Tomorrow (if tomorrow is Sunday or a holiday)
+    today_date = date.today()
+    tomorrow_date = today_date + timedelta(days=1)
+    tomorrow_is_sunday = tomorrow_date.weekday() == 6
+    tomorrow_is_holiday = tomorrow_date.strftime("%Y-%m-%d") in holiday_list
+    
+    allowed_ot_dates = [today_date]
+    if tomorrow_is_sunday or tomorrow_is_holiday:
+        allowed_ot_dates.append(tomorrow_date)
+
     col1, col2 = st.columns(2)
     with col1:
         selected_staff_members = st.multiselect("Select Staff Member(s) for Overtime", options=all_emp_names, default=[logged_in_emp])
-        ot_date = st.date_input("Select Target Date", value=date.today(), key="ot_date_picker")
+        ot_date = st.selectbox("Select Target Date", options=allowed_ot_dates, format_func=lambda d: d.strftime("%Y-%m-%d"))
         date_str = ot_date.strftime("%Y-%m-%d") if ot_date else ""
         
         is_sunday = ot_date.weekday() == 6 if ot_date else False
@@ -605,9 +615,22 @@ with tab1:
                         INSERT INTO overtime_requests (username, emp_name, ot_date, start_time, end_time, needs_transport, origin, destination, departure_time, return_time)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (st.session_state.username, staff, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), needs_transport, origin, destination, dep_time_str, ret_time_str))
+                
+                # --- AUTOMATIC DAILY TRANSIT DISPATCH INTEGRATION ---
+                existing_dispatch = conn.execute(
+                    "SELECT id FROM daily_transit WHERE transit_date_start = ? AND transit_date_end = ?", 
+                    (date_str, date_str)
+                ).fetchone()
+                
+                if not existing_dispatch:
+                    conn.execute('''
+                        INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (date_str, date_str, "TBA", logged_in_emp, "19:00", "", "Yard-1 Office", "Panbil", "No", "Trip D"))
+                
                 conn.commit()
                 conn.close()
-                set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s).", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s) & transit dispatch schedule created.", "success")
             except Exception as e:
                 set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save record: {str(e)}", "error")
         st.rerun()
@@ -1037,12 +1060,10 @@ with tab3:
             if uploaded_db_file is not None:
                 if st.button("🚀 Confirm and Restore Database", type="primary"):
                     try:
-                        # Create safety backup of current db first
                         if os.path.exists(DB_FILE):
                             safety_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             shutil.copy2(DB_FILE, os.path.join(BACKUP_DIR, f"pre_restore_safety_{safety_timestamp}.db"))
                         
-                        # Overwrite active database file with uploaded file
                         with open(DB_FILE, "wb") as f:
                             f.write(uploaded_db_file.getbuffer())
                             
