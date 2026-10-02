@@ -743,6 +743,15 @@ if not st.session_state.logged_in:
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
+
+# --- USER MANUALS LINKS SECTION ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📖 User Manuals")
+st.sidebar.markdown("📄 [User Manual Guide](#)")
+if st.session_state.role in ["Admin", "Owner"]:
+    st.sidebar.markdown("🛠️ [Admin & Owner Guide](#)")
+
+st.sidebar.markdown("---")
 if st.sidebar.button("Logout Profile"):
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -1504,7 +1513,7 @@ with tab3:
                 cursor.execute(f"DELETE FROM {selected_table}")
                 
                 rows_to_save = edited_df.copy()
-                if is_owner and "🗑️ Delete" in rows_to_save.columns:
+                if is_owner and "🗑️️ Delete" in rows_to_save.columns:
                     # Filter out rows marked for deletion (Owner only)
                     rows_to_save = rows_to_save[rows_to_save["🗑️ Delete"] != True]
                     rows_to_save = rows_to_save.drop(columns=["🗑️ Delete"])
