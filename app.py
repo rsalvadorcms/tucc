@@ -752,6 +752,13 @@ with tab1_b:
                 f"Please find the attached passenger layout schedule above."
             )
             wa_url = f"https://wa.me/?text={wa_message}"
+
+            # Using st.link_button to perfectly match Streamlit's native button height and styling
+            st.link_button(
+                "💬 Share on WhatsApp", 
+                url=wa_url, 
+                use_container_width=True
+            
             st.markdown(
                 f"""
                 <div style="margin-top: 28px;">
