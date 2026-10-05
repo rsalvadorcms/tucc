@@ -7,9 +7,7 @@ import string
 import os
 import re
 import shutil
-import threading
 import base64
-import time as time_module
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -81,8 +79,8 @@ def set_transaction_dialog(title: str, message: str, status_type: str = "success
     st.session_state.tx_dialog_msg = message
     st.session_state.tx_dialog_type = status_type
 
-def perform_automated_backup():
-    """Creates a timestamped backup of the SQLite database and exports ALL database tables to Excel."""
+def perform_manual_backup():
+    """Creates a manual timestamped backup of the SQLite database and exports ALL database tables to Excel."""
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
         
@@ -109,31 +107,10 @@ def perform_automated_backup():
             pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
             pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
         conn.close()
+        return True
     except Exception as e:
         print(f"Excel backup export error: {e}")
-
-_last_backup_slot = None
-
-def run_scheduler():
-    """Background worker loop running scheduled backups at 11:30 AM and 5:30 PM using standard libraries."""
-    global _last_backup_slot
-    while True:
-        now = datetime.now()
-        current_time_str = now.strftime("%H:%M")
-        current_date_str = now.strftime("%Y-%m-%d")
-        
-        if current_time_str in ["11:30", "17:30"]:
-            backup_key = f"{current_date_str}_{current_time_str}"
-            if _last_backup_slot != backup_key:
-                perform_automated_backup()
-                _last_backup_slot = backup_key
-                
-        time_module.sleep(30)
-
-if 'backup_scheduler_started' not in st.session_state:
-    st.session_state.backup_scheduler_started = True
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
+        return False
 
 def format_military_time(input_str: str) -> str:
     if not input_str:
@@ -1345,12 +1322,30 @@ elif nav_selection == "📢 Site News":
     conn.close()
     st.dataframe(news_df, use_container_width=True)
 
-elif nav_selection == "🛠️️ System Administration":
+elif nav_selection == "🛠️ System Administration":
     current_role = st.session_state.get("role", "")
     if current_role not in ["Admin", "Owner"]:
         st.error("🛡️ Restricted Access Control: Admin or Owner clearance required.")
     else:
         st.header("Admin Control Dashboard Engine")
+        
+        st.markdown("---")
+        st.subheader("💾 Manual Database Backup & Snapshot Download")
+        if st.button("🔄 Create & Download Manual Backup Now", type="primary"):
+            success = perform_manual_backup()
+            if success:
+                set_transaction_dialog("Backup Created", "Database snapshot and full Excel export successfully created in the 'backups' folder.", "success")
+            else:
+                set_transaction_dialog("Backup Failed", "Could not generate backup files.", "error")
+            st.rerun()
+
+        backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True) if os.path.exists(BACKUP_DIR) else []
+        if backup_files:
+            selected_backup = st.selectbox("Select Available Backup Snapshot", backup_files)
+            if selected_backup:
+                with open(os.path.join(BACKUP_DIR, selected_backup), "rb") as f:
+                    st.download_button(f"📥 Download Selected Backup ({selected_backup})", data=f, file_name=selected_backup, mime="application/octet-stream")
+        
         st.markdown("---")
         st.subheader("🗃️ Master Data Tables Inline CRUD Editor")
         selected_table = st.selectbox("Choose Database Table to Manage", ["users", "holidays", "trips", "overtime_requests", "meeting_rooms", "room_bookings", "fleet_drivers", "cars", "transit_groups", "transit_passengers", "daily_transit", "site_news"])
