@@ -6,6 +6,8 @@ import urllib.parse
 import string
 import os
 import re
+import shutil
+import base64
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -76,6 +78,38 @@ def set_transaction_dialog(title: str, message: str, status_type: str = "success
     st.session_state.tx_dialog_title = title
     st.session_state.tx_dialog_msg = message
     st.session_state.tx_dialog_type = status_type
+
+def perform_manual_backup():
+    """Creates a timestamped manual backup of the SQLite database and exports ALL database tables to Excel."""
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR)
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if os.path.exists(DB_FILE):
+        backup_db_path = os.path.join(BACKUP_DIR, f"backup_db_{timestamp}.db")
+        shutil.copy2(DB_FILE, backup_db_path)
+        
+    try:
+        conn = get_db_connection()
+        backup_excel_path = os.path.join(BACKUP_DIR, f"backup_data_{timestamp}.xlsx")
+        with pd.ExcelWriter(backup_excel_path, engine='openpyxl') as writer:
+            pd.read_sql_query("SELECT * FROM daily_transit", conn).to_excel(writer, index=False, sheet_name="daily_transit")
+            pd.read_sql_query("SELECT * FROM overtime_requests", conn).to_excel(writer, index=False, sheet_name="overtime_requests")
+            pd.read_sql_query("SELECT * FROM room_bookings", conn).to_excel(writer, index=False, sheet_name="room_bookings")
+            pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
+            pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
+            pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
+            pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
+            pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
+            pd.read_sql_query("SELECT * FROM holidays", conn).to_excel(writer, index=False, sheet_name="holidays")
+            pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
+            pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
+            pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
+        conn.close()
+        return True, backup_db_path, backup_excel_path
+    except Exception as e:
+        return False, str(e), ""
 
 def format_military_time(input_str: str) -> str:
     if not input_str:
@@ -606,6 +640,7 @@ def init_db():
     
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO users VALUES ('owner', 'owner123', 'Owner', 'owner@company.com', 'System Owner')")
         cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
 
     cursor.execute("SELECT COUNT(*) FROM trips")
@@ -1631,33 +1666,43 @@ elif nav_selection == "📢 Site News":
 
     st.subheader("📋 Published Site News Bulletins (Latest to Oldest)")
     conn = get_db_connection()
-    news_df = pd.read_sql_query("SELECT * FROM site_news ORDER BY id DESC", conn)
+    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, file_type, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
     conn.close()
-    
+
     if not news_df.empty:
-        for _, row in news_df.iterrows():
-            news_id, title, filename, file_path, file_type, uploaded_by, upload_date = row['id'], row['title'], row['filename'], row['file_path'], row['file_type'], row['uploaded_by'], row['upload_date']
+        for _, n_row in news_df.iterrows():
+            n_id, n_title, n_fname, n_fpath, n_ftype, n_author, n_date = n_row['id'], n_row['title'], n_row['filename'], n_row['file_path'], n_row['file_type'], n_row['uploaded_by'], n_row['upload_date']
+            
             with st.container():
-                st.markdown(f"#### 📌 {title}")
-                st.caption(f"Published by: **{uploaded_by}** on {upload_date}")
+                st.markdown(f"#### 📌 {n_title}")
+                st.caption(f"Published by **{n_author}** on {n_date}")
                 
-                if file_type == "pdf" and os.path.exists(file_path):
-                    with open(file_path, "rb") as pdf_file:
-                        PDFbyte = pdf_file.read()
-                    st.download_button(f"📥 Download PDF Bulletin ({filename})", data=PDFbyte, file_name=filename, mime="application/pdf", key=f"dl_news_{news_id}")
-                elif file_type == "png" and os.path.exists(file_path):
-                    st.image(file_path, caption=title, use_container_width=True)
+                if os.path.exists(n_fpath):
+                    if n_ftype == "png":
+                        st.image(n_fpath, caption=n_fname, use_container_width=True)
+                    elif n_ftype == "pdf":
+                        with open(n_fpath, "rb") as pdf_file:
+                            pdf_bytes = pdf_file.read()
+                        st.download_button(
+                            f"📥 Download Bulletin PDF ({n_fname})",
+                            data=pdf_bytes,
+                            file_name=n_fname,
+                            mime="application/pdf",
+                            key=f"dl_news_{n_id}"
+                        )
+                else:
+                    st.warning("⚠️ Attached file not found on server storage.")
                 
                 if is_admin_or_owner:
-                    if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}", type="secondary"):
+                    if st.button("🗑️ Delete Bulletin", key=f"del_news_{n_id}", type="primary"):
                         try:
-                            if os.path.exists(file_path):
-                                os.remove(file_path)
+                            if os.path.exists(n_fpath):
+                                os.remove(n_fpath)
                             conn = get_db_connection()
-                            conn.execute("DELETE FROM site_news WHERE id = ?", (news_id,))
+                            conn.execute("DELETE FROM site_news WHERE id = ?", (n_id,))
                             conn.commit()
                             conn.close()
-                            set_transaction_dialog("Deletion Successful", f"Bulletin #{news_id} deleted successfully.", "success")
+                            set_transaction_dialog("Deletion Successful", f"Bulletin '{n_title}' deleted.", "success")
                         except Exception as e:
                             set_transaction_dialog("Deletion Unsuccessful", f"Failed to delete: {str(e)}", "error")
                         st.rerun()
@@ -1665,148 +1710,130 @@ elif nav_selection == "📢 Site News":
     else:
         st.info("No site news bulletins published yet.")
 
-# 8. SYSTEM ADMINISTRATION
+# 8. SYSTEM ADMINISTRATION (Owner-only backup/restore, plus Admin/Owner data imports)
 elif nav_selection == "🛠️ System Administration":
-    st.header("🛠️ System Administration & User Configuration")
-    is_admin = st.session_state.get("role", "") == "Admin"
+    st.header("🛠️ System Administration & Data Management")
+    current_role = st.session_state.get("role", "")
     
-    if not is_admin:
-        st.error("Access Denied. Administrator privileges are required to view this panel.")
+    if current_role not in ["Admin", "Owner"]:
+        st.error("Access Denied. You must be an Administrator or System Owner to access this panel.")
     else:
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Users Management", "Fleet Vehicles", "Fleet Drivers", "Holidays Management", "Database Backup"])
-        
-        with tab1:
-            st.subheader("Manage System Users")
-            with st.form("add_user_form", clear_on_submit=True):
-                new_uname = st.text_input("Username")
-                new_pwd = st.text_input("Password", type="password")
-                new_role = st.selectbox("Role", ["Staff", "Admin", "Owner"])
-                new_emp_name = st.text_input("Full Employee Name")
-                new_email = st.text_input("Email Address")
-                if st.form_submit_button("Create User"):
-                    if new_uname and new_pwd:
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?)", (new_uname, new_pwd, new_role, new_email, new_emp_name))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Success", f"User '{new_uname}' created.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                        st.rerun()
-
-            conn = get_db_connection()
-            users_df = pd.read_sql_query("SELECT username, role, email_recipients, emp_name FROM users", conn)
-            conn.close()
-            st.dataframe(users_df, use_container_width=True)
-
-        with tab2:
-            st.subheader("Manage Fleet Vehicles")
-            with st.form("add_car_form", clear_on_submit=True):
-                c_name = st.text_input("Group/Car Name (e.g. Car C)")
-                c_plate = st.text_input("Plate Number (e.g. B 9999 XYZ)")
-                c_model = st.text_input("Vehicle Model (e.g. Toyota HiACE)")
-                c_color = st.text_input("Color", value="Black")
-                if st.form_submit_button("Add Fleet Vehicle"):
-                    if c_name and c_plate:
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES (?, ?, ?, ?)", (c_name, c_plate, c_model, c_color))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Success", f"Vehicle '{c_name}' added.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                        st.rerun()
-
-            conn = get_db_connection()
-            cars_df = pd.read_sql_query("SELECT car_name AS 'Group/Car', plate_number AS 'Plate No.', vehicle AS 'Model', color AS 'Color' FROM cars", conn)
-            conn.close()
-            st.dataframe(cars_df, use_container_width=True)
-
-        with tab3:
-            st.subheader("Manage Fleet Drivers")
-            with st.form("add_driver_form", clear_on_submit=True):
-                d_name = st.text_input("Driver Full Name")
-                d_mob = st.text_input("Driver Mobile / Contact (+62...)")
-                if st.form_submit_button("Add Driver"):
-                    if d_name:
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("INSERT INTO fleet_drivers VALUES (?, ?)", (d_name, d_mob))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Success", f"Driver '{d_name}' added.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                        st.rerun()
-
-            conn = get_db_connection()
-            drivers_df = pd.read_sql_query("SELECT driver_name AS 'Driver Name', driver_mobile AS 'Contact Number' FROM fleet_drivers", conn)
-            conn.close()
-            st.dataframe(drivers_df, use_container_width=True)
-
-        with tab4:
-            st.subheader("Manage Company Holidays")
-            with st.form("add_holiday_form", clear_on_submit=True):
-                h_date = st.date_input("Holiday Date", value=date.today())
-                h_desc = st.text_input("Holiday Description")
-                if st.form_submit_button("Add Holiday"):
-                    try:
-                        conn = get_db_connection()
-                        conn.execute("INSERT INTO holidays VALUES (?, ?)", (h_date.strftime("%Y-%m-%d"), h_desc))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", f"Holiday added for {h_date}.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
+        # Owner-exclusive Manual Backup & Restore Section
+        if current_role == "Owner":
+            st.subheader("🔒 Owner Exclusive: Database Backup & Restore")
+            b_col1, b_col2 = st.columns(2)
+            
+            with b_col1:
+                st.markdown("##### Manual Backup")
+                st.write("Generate an immediate timestamped database snapshot (.db) and Excel master export.")
+                if st.button("Create Manual Backup Now", type="primary"):
+                    success, db_res, excel_res = perform_manual_backup()
+                    if success:
+                        set_transaction_dialog("Backup Successful", f"Database backed up to:\n- {db_res}\n- {excel_res}", "success")
+                    else:
+                        set_transaction_dialog("Backup Failed", f"Error: {db_res}", "error")
                     st.rerun()
-
-            conn = get_db_connection()
-            holidays_df = pd.read_sql_query("SELECT holiday_date AS 'Date', description AS 'Description' FROM holidays ORDER BY holiday_date DESC", conn)
-            conn.close()
-            st.dataframe(holidays_df, use_container_width=True)
-
-        with tab5:
-            st.subheader("Database Backup & Export")
-            st.write("Download a full backup of the SQLite database and an Excel workbook containing all system tables.")
-            
-            if os.path.exists(DB_FILE):
-                with open(DB_FILE, "rb") as db_f:
-                    db_bytes = db_f.read()
-                st.download_button(
-                    "📥 Download SQLite Database File (.db)",
-                    data=db_bytes,
-                    file_name=f"office_operations_backup_{datetime.today().strftime('%Y%m%d')}.db",
-                    mime="application/octet-stream",
-                    use_container_width=True
-                )
-            
-            if st.button("📥 Generate & Download All Tables Excel Backup", use_container_width=True):
-                try:
-                    conn = get_db_connection()
-                    excel_buffer = io.BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                        pd.read_sql_query("SELECT * FROM daily_transit", conn).to_excel(writer, index=False, sheet_name="daily_transit")
-                        pd.read_sql_query("SELECT * FROM overtime_requests", conn).to_excel(writer, index=False, sheet_name="overtime_requests")
-                        pd.read_sql_query("SELECT * FROM room_bookings", conn).to_excel(writer, index=False, sheet_name="room_bookings")
-                        pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
-                        pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
-                        pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
-                        pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
-                        pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
-                        pd.read_sql_query("SELECT * FROM holidays", conn).to_excel(writer, index=False, sheet_name="holidays")
-                        pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
-                        pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
-                        pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
-                    conn.close()
                     
-                    st.download_button(
-                        "📥 Click to Save All Tables Excel File",
-                        data=excel_buffer.getvalue(),
-                        file_name=f"complete_system_data_backup_{datetime.today().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Failed to generate Excel backup: {e}")
+                # List existing backups for download
+                if os.path.exists(BACKUP_DIR):
+                    backup_files = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')], reverse=True)
+                    if backup_files:
+                        selected_dl_backup = st.selectbox("Select Backup Database to Download", backup_files)
+                        dl_path = os.path.join(BACKUP_DIR, selected_dl_backup)
+                        if os.path.exists(dl_path):
+                            with open(dl_path, "rb") as db_f:
+                                st.download_button(
+                                    "📥 Download Backup File (.db)",
+                                    data=db_f.read(),
+                                    file_name=selected_dl_backup,
+                                    mime="application/octet-stream"
+                                )
+                                
+            with b_col2:
+                st.markdown("##### Restore Database")
+                st.write("Upload a valid SQLite database backup file (.db) to restore system state.")
+                uploaded_db_file = st.file_uploader("Upload Backup Database (.db)", type=["db"])
+                if uploaded_db_file is not None:
+                    if st.button("⚠️ Confirm and Restore Database", type="primary"):
+                        try:
+                            restore_path = os.path.join(BACKUP_DIR, f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+                            with open(restore_path, "wb") as f:
+                                f.write(uploaded_db_file.getbuffer())
+                            shutil.copy2(restore_path, DB_FILE)
+                            set_transaction_dialog("Restore Successful", "Database restored successfully. Please refresh or log back in.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Restore Failed", f"Error: {str(e)}", "error")
+                        st.rerun()
+            st.markdown("---")
+
+        # Data Import Functions for All Tables (Available to Admin & Owner)
+        st.subheader("📥 Data Import Center (Upload Excel / CSV to Tables)")
+        st.write("Select a target table and upload an Excel (.xlsx) or CSV file matching table columns to bulk import records.")
+
+        table_import_options = {
+            "daily_transit": "Daily Transit Dispatches",
+            "transit_groups": "Transit Groups",
+            "transit_passengers": "Transit Passengers",
+            "overtime_requests": "Overtime Requests",
+            "cars": "Cars / Fleet Vehicles",
+            "fleet_drivers": "Fleet Drivers",
+            "users": "Users Profile",
+            "holidays": "Holidays",
+            "meeting_rooms": "Meeting Rooms",
+            "room_bookings": "Room Bookings",
+            "trips": "Trips",
+            "site_news": "Site News"
+        }
+
+        selected_import_tbl_key = st.selectbox("Select Target Table for Import", list(table_import_options.keys()), format_func=lambda x: table_import_options[x])
+        import_file = st.file_uploader(f"Upload Data File for [{table_import_options[selected_import_tbl_key]}]", type=["xlsx", "csv"], key=f"import_file_{selected_import_tbl_key}")
+
+        if import_file is not None:
+            try:
+                if import_file.name.endswith('.csv'):
+                    import_df = pd.read_csv(import_file)
+                else:
+                    import_df = pd.read_excel(import_file)
+
+                st.markdown("##### Preview Uploaded Data:")
+                st.dataframe(import_df.head(), use_container_width=True)
+
+                import_mode = st.radio("Import Mode", ["Append (Insert new records)", "Replace (Overwrite table data)"], index=0)
+
+                if st.button("Execute Data Import", type="primary"):
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    
+                    if import_mode == "Replace":
+                        # Disable foreign key checks temporarily if replacing parent/child
+                        cursor.execute("PRAGMA foreign_keys = OFF;")
+                        cursor.execute(f"DELETE FROM {selected_import_tbl_key};")
+                    
+                    import_df.to_sql(selected_import_tbl_key, conn, if_exists='append', index=False)
+                    
+                    if import_mode == "Replace":
+                        cursor.execute("PRAGMA foreign_keys = ON;")
+                        
+                    conn.commit()
+                    conn.close()
+                    set_transaction_dialog("Import Successful", f"Successfully imported {len(import_df)} rows into table '{selected_import_tbl_key}'.", "success")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Import Error: {str(e)}")
+
+        st.markdown("---")
+        st.subheader("📋 System Database Overview & Export All Tables")
+        conn = get_db_connection()
+        all_tables = [t['name'] for t in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
+        
+        selected_view_tbl = st.selectbox("Select Table to View & Export", all_tables)
+        view_df = pd.read_sql_query(f"SELECT * FROM {selected_view_tbl}", conn)
+        conn.close()
+
+        st.dataframe(view_df, use_container_width=True)
+        st.download_button(
+            f"📥 Download Table [{selected_view_tbl}] as Excel (.xlsx)",
+            data=export_df_to_excel(view_df, sheet_name=selected_view_tbl),
+            file_name=f"{selected_view_tbl}_{datetime.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
