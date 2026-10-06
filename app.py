@@ -6,7 +6,6 @@ import urllib.parse
 import string
 import os
 import re
-import base64
 from datetime import datetime, date, timedelta, time
 
 import openpyxl
@@ -694,9 +693,11 @@ st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 st.sidebar.markdown("---")
 st.sidebar.subheader("📌 Navigation")
 
+# Mobile Responsiveness & Left-Aligned Sidebar CSS
 st.sidebar.markdown(
     """
     <style>
+    /* Force strict left alignment on all sidebar buttons and child elements */
     [data-testid="stSidebar"] button {
         display: flex !important;
         justify-content: flex-start !important;
@@ -713,6 +714,7 @@ st.sidebar.markdown(
         width: 100% !important;
     }
 
+    /* Mobile Enhancements (Screens <= 768px) */
     @media (max-width: 768px) {
         .freeze-pane-container {
             max-height: 450px !important;
@@ -752,6 +754,7 @@ nav_options = [
 if 'nav_selection' not in st.session_state:
     st.session_state.nav_selection = nav_options[0]
 
+# Render interactive custom navigation items with light-yellow active highlight and left alignment
 for opt in nav_options:
     is_active = (st.session_state.nav_selection == opt)
     
@@ -781,7 +784,7 @@ if st.sidebar.button("Logout Profile"):
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
-# 1. DAILY TRANSPORTATION ARRANGEMENT
+# 1. DAILY TRANSPORTATION ARRANGEMENT (Passenger List Layout with Excel-like Freeze Pane Scroll Container)
 if nav_selection == "🏠 Daily Transportation Arrangement":
     st.markdown(
         """
@@ -921,7 +924,7 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
 
-# 2. SHUTTLE TIMETABLE
+# 2. SHUTTLE TIMETABLE (Shuttle Format with Excel-like Freeze Pane Scroll Container)
 elif nav_selection == "📅 Shuttle Timetable":
     st.markdown(
         """
@@ -1258,7 +1261,7 @@ elif nav_selection == "⏰ Overtime & Transport":
 
         st.download_button("📥 Export Overtime Log to Excel (.xlsx)", data=export_df_to_excel(ot_df, sheet_name="Overtime_Requests"), file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# 4. TRANSIT GROUPS & PASSENGERS (With Import Capabilities added)
+# 4. TRANSIT GROUPS & PASSENGERS
 elif nav_selection == "👥 Transit Groups & Passengers":
     st.header("👥 Transit Groups & Passengers Management")
     conn = get_db_connection()
@@ -1308,38 +1311,6 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                     except Exception as e:
                         set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
                 st.rerun()
-
-    # --- ADDED: Import Transit Groups Feature ---
-    st.markdown("---")
-    with st.expander("📥 Import Transit Groups & Passengers from Excel"):
-        st.write("Upload an Excel file containing columns for `group_name`, `driver_name`, `etd_1`, `etd_2`, and `passengers` to bulk import transit groups.")
-        uploaded_transit_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"], key="transit_excel_upload")
-        if uploaded_transit_file is not None:
-            try:
-                import_df = pd.read_excel(uploaded_transit_file)
-                st.dataframe(import_df.head())
-                if st.button("Process & Import Transit Data"):
-                    conn = get_db_connection()
-                    imported_count = 0
-                    for _, row in import_df.iterrows():
-                        g_name = str(row.get('group_name', '')).strip()
-                        d_name = str(row.get('driver_name', '')).strip()
-                        e1 = format_military_time(str(row.get('etd_1', ''))) or "05:45"
-                        e2 = format_military_time(str(row.get('etd_2', ''))) or "17:30"
-                        p_name = str(row.get('passengers', '')).strip()
-                        
-                        if g_name and g_name != 'nan':
-                            # Ensure group exists
-                            conn.execute("INSERT OR IGNORE INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (?, ?, ?, ?)", (g_name, d_name if d_name != 'nan' else None, e1, e2))
-                            if p_name and p_name != 'nan':
-                                conn.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (?, ?)", (g_name, p_name))
-                            imported_count += 1
-                    conn.commit()
-                    conn.close()
-                    set_transaction_dialog("Import Successful", f"Successfully processed {imported_count} transit group records.", "success")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Error importing file: {str(e)}")
 
     st.markdown("---")
     title_col, eff_date_col = st.columns([2, 1])
@@ -1434,314 +1405,408 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
     dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL", conn)
     conn.close()
     
-    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Wasco", "Main Gate"]
-    origin_options = list(set(default_locations + origins_df['location_from'].dropna().tolist()))
-    dest_options = list(set(default_locations + dests_df['location_to'].dropna().tolist()))
-    car_options = cars_db_df['car_name'].tolist() if not cars_db_df.empty else ["TBA"]
-    trip_options = trips_db_df['trip'].tolist() if not trips_db_df.empty else ["Trip A"]
-    trip_dict = dict(zip(trips_db_df['trip'], trips_db_df['trip_name'])) if not trips_db_df.empty else {"Trip A": "Yard to Yard"}
+    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport"]
+    origin_list = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
+    dest_list = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
+    render_datalist_options("origin_list_dl", origin_list)
+    render_datalist_options("dest_list_dl", dest_list)
 
-    with st.form("dispatch_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            transit_start_date = st.date_input("Dispatch Start Date", value=date.today())
-            transit_end_date = st.date_input("Dispatch End Date", value=date.today())
-            selected_trip = st.selectbox("Select Trip Code", options=trip_options, format_func=lambda x: f"{x} - {trip_dict.get(x, '')}")
-            selected_car_group = st.selectbox("Assign Car / Transit Group", options=car_options)
-        with col2:
-            loc_from = st.selectbox("Origin Location", options=origin_options, index=0)
-            loc_to = st.selectbox("Destination Location", options=dest_options, index=1 if len(dest_options) > 1 else 0)
-            raw_etd1 = st.text_input("ETD 1 [e.g. 0700 or 07:00]", value="07:00")
-            raw_etd2 = st.text_input("ETD 2 (Return) [e.g. 1700 or 17:00]", value="17:00")
-            is_daily = st.selectbox("Apply Daily Recurring?", ["No", "Yes"], index=0)
+    current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
+    if not all_emp_names:
+        all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
+    default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
+    is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
 
-        submitted_dispatch = st.form_submit_button("Save Transit Dispatch Record")
-        if submitted_dispatch:
-            s_date_str = transit_start_date.strftime("%Y-%m-%d")
-            e_date_str = transit_end_date.strftime("%Y-%m-%d")
-            fmt_etd1 = format_military_time(raw_etd1)
-            fmt_etd2 = format_military_time(raw_etd2)
-            
-            if not s_date_str or not e_date_str:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Dates cannot be empty.", "error")
+    trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
+    trip_code_map = {lbl: lbl.split(" (")[0] for lbl in trip_option_labels}
+
+    car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows() if r['car_name'] != 'TBA']
+    car_label_to_group = {"TBA - To Be Assigned": "TBA"}
+    for _, r in cars_db_df.iterrows():
+        lbl = f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "")
+        car_label_to_group[lbl] = r['car_name']
+
+    if "dispatch_reset_counter" not in st.session_state:
+        st.session_state.dispatch_reset_counter = 0
+    reset_id = st.session_state.dispatch_reset_counter
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Configure Transit Request")
+        requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by), key=f"dt_req_{reset_id}")
+        selected_trip_label = st.selectbox("Trip Category", options=trip_option_labels, index=0, key=f"dt_trip_{reset_id}")
+        selected_trip_code = trip_code_map.get(selected_trip_label, "Trip A")
+
+        is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"] if is_admin_or_owner else ["No"], index=0, disabled=not is_admin_or_owner, key=f"dt_daily_{reset_id}")
+        dispatch_date_start = st.date_input("Select Transit Start Date", value=date.today(), min_value=date.today(), key=f"reg_dt_start_{reset_id}")
+        
+        if is_daily == "Yes":
+            dispatch_date_end = st.date_input("Select Transit End Date", value=dispatch_date_start + timedelta(days=1), min_value=dispatch_date_start + timedelta(days=1), key=f"reg_dt_end_{reset_id}")
+        else:
+            dispatch_date_end = dispatch_date_start
+
+        location_from = st.text_input("Origin Location", value="Yard-1 Office" if reset_id == 0 else "", placeholder="[origin_list_dl] Type origin...", key=f"txt_origin_{reset_id}")
+        location_to = st.text_input("Target Location", value="Yard-3 Office" if reset_id == 0 else "", placeholder="[dest_list_dl] Type target...", key=f"txt_dest_{reset_id}")
+
+    with col2:
+        st.subheader("Schedule & Vehicle Allocation")
+        raw_etd1 = st.text_input("ETD 1 (Start Time)", value="08:00" if reset_id == 0 else "", placeholder="0800", key=f"etd1_{reset_id}")
+        raw_etd2 = st.text_input("ETD 2 (Return Time)", value="17:00" if reset_id == 0 else "", placeholder="1700", key=f"etd2_{reset_id}")
+        selected_car_label = st.selectbox("Assigned Group / Car Name", options=car_option_labels, index=0, disabled=not is_admin_or_owner, key=f"car_{reset_id}")
+        selected_group = car_label_to_group.get(selected_car_label, "TBA") if is_admin_or_owner else "TBA"
+
+    b_col1, b_col2 = st.columns([1, 4])
+    with b_col1:
+        if st.button("Submit Transit Request", type="primary"):
+            fmt_etd1, fmt_etd2 = format_military_time(raw_etd1), format_military_time(raw_etd2)
+            if not fmt_etd1 or not fmt_etd2:
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD Time format.", "error")
             else:
                 try:
                     conn = get_db_connection()
                     conn.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (s_date_str, e_date_str, selected_car_group, st.session_state.username, fmt_etd1, fmt_etd2, loc_from, loc_to, is_daily, selected_trip))
+                    ''', (dispatch_date_start.strftime("%Y-%m-%d"), dispatch_date_end.strftime("%Y-%m-%d"), selected_group, requested_by, fmt_etd1, fmt_etd2, location_from.strip(), location_to.strip(), is_daily, selected_trip_code))
                     conn.commit()
                     conn.close()
-                    set_transaction_dialog("Data Transaction Successful", "Daily transit dispatch schedule successfully saved.", "success")
+                    set_transaction_dialog("Data Transaction Successful", "Transit dispatch logged successfully.", "success")
                 except Exception as e:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
-                st.rerun()
+                    set_transaction_dialog("Data Transaction Unsuccessful", f"Error: {str(e)}", "error")
+            st.rerun()
+    with b_col2:
+        if st.button("🧹 Clear Form Inputs"):
+            st.session_state.dispatch_reset_counter += 1
+            st.rerun()
 
-    st.subheader("📋 Configured Daily Transit Dispatches")
+    st.markdown("---")
+    st.subheader("📊 Scheduled Transit Dispatches Log")
     conn = get_db_connection()
-    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS 'Start Date', transit_date_end AS 'End Date', trip AS 'Trip', group_name AS 'Car Group', location_from AS 'Origin', location_to AS 'Destination', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', daily AS 'Daily', requested_by AS 'Requested By' FROM daily_transit ORDER BY id DESC", conn)
+    daily_raw_df = pd.read_sql_query('''
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
+               t.trip || ' (' || t.trip_name || ')' AS trip_display, 
+               dt.trip AS trip_code,
+               dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, dt.daily,
+               tg.driver_name
+        FROM daily_transit dt 
+        LEFT JOIN cars c ON dt.group_name = c.car_name
+        LEFT JOIN trips t ON dt.trip = t.trip
+        LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
+        ORDER BY dt.transit_date_start DESC, dt.id DESC
+    ''', conn)
     conn.close()
     
-    if not transit_df.empty:
-        st.dataframe(transit_df, use_container_width=True)
+    if not daily_raw_df.empty:
+        display_df = daily_raw_df.copy()
+        display_df['Group / Car'] = display_df.apply(lambda r: f"{r['group_name']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['group_name'] != 'TBA' else r['group_name'], axis=1)
+        export_df = display_df[["id", "transit_date_start", "transit_date_end", "trip_display", "requested_by", "Group / Car", "location_from", "location_to", "etd_1", "etd_2", "daily"]].rename(columns={"id": "Dispatch ID", "transit_date_start": "Start Date", "transit_date_end": "End Date", "trip_display": "Trip Category", "requested_by": "Requested By", "location_from": "Origin", "location_to": "Destination", "etd_1": "ETD Start", "etd_2": "ETD Return", "daily": "Recurring"})
+        st.dataframe(export_df, use_container_width=True)
         
-        with st.expander("✏️ Manage / Remove Transit Dispatches"):
+        with st.expander("✏️ Manage / Remove Scheduled Dispatches"):
             conn = get_db_connection()
-            t_raw = pd.read_sql_query("SELECT id, transit_date_start, trip, group_name FROM daily_transit ORDER BY id DESC", conn)
+            dispatches_raw = pd.read_sql_query("SELECT id, transit_date_start, requested_by, location_from, location_to, trip FROM daily_transit ORDER BY id DESC", conn)
             conn.close()
             
-            for _, tr_row in t_raw.iterrows():
-                tr_id, tr_date, tr_trip, tr_grp = tr_row['id'], tr_row['transit_date_start'], tr_row['trip'], tr_row['group_name']
-                t_col1, t_col2 = st.columns([4, 1])
-                with t_col1:
-                    st.text(f"ID #{tr_id} | Date: {tr_date} | Trip: {tr_trip} | Group: {tr_grp}")
-                with t_col2:
-                    if st.button("🗑️ Remove", key=f"del_transit_{tr_id}", type="primary"):
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("DELETE FROM daily_transit WHERE id = ?", (tr_id,))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Deletion Successful", f"Removed transit dispatch #{tr_id}.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
-                        st.rerun()
+            if not dispatches_raw.empty:
+                for _, d_row in dispatches_raw.iterrows():
+                    d_id, d_date, d_req, d_from, d_to, d_trip = d_row['id'], d_row['transit_date_start'], d_row['requested_by'], d_row['location_from'], d_row['location_to'], d_row['trip']
+                    d_col1, d_col2, d_col3 = st.columns([3, 2, 1])
+                    with d_col1:
+                        st.text(f"ID #{d_id} | Date: {d_date} | {d_from} ➔ {d_to}")
+                    with d_col2:
+                        st.text(f"Req: {d_req} | Trip: {d_trip}")
+                    with d_col3:
+                        if st.button("🗑️ Remove", key=f"del_dispatch_{d_id}", type="primary"):
+                            try:
+                                conn = get_db_connection()
+                                conn.execute("DELETE FROM daily_transit WHERE id = ?", (d_id,))
+                                conn.commit()
+                                conn.close()
+                                set_transaction_dialog("Deletion Successful", f"Removed dispatch record #{d_id}.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                            st.rerun()
+            else:
+                st.info("No dispatch records found.")
+
+        st.download_button("📥 Export Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(export_df, sheet_name="Daily_Dispatches"), file_name=f"Daily_Dispatch_Schedule_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # 6. MEETING ROOMS
 elif nav_selection == "🏢 Meeting Rooms":
-    st.header("🏢 Meeting Rooms Booking & Management")
+    st.header("Meeting Space Reservations Desk")
     conn = get_db_connection()
-    rooms_df = pd.read_sql_query("SELECT room_number AS 'Room Number', room_name AS 'Room Name', capacity AS 'Capacity', location AS 'Location' FROM meeting_rooms", conn)
+    rooms = conn.execute("SELECT * FROM meeting_rooms").fetchall()
     conn.close()
     
-    st.subheader("Available Meeting Rooms")
-    st.dataframe(rooms_df, use_container_width=True)
-    
-    if st.session_state.role in ["Admin", "Owner"]:
-        with st.expander("➕ Add New Meeting Room"):
-            with st.form("add_room_form"):
-                r_num = st.text_input("Room Number")
-                r_name = st.text_input("Room Name")
-                r_cap = st.number_input("Capacity", min_value=1, value=10)
-                r_loc = st.text_input("Location / Floor")
-                submitted_room = st.form_submit_button("Save Meeting Room")
-                if submitted_room:
-                    if r_num and r_name:
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("INSERT INTO meeting_rooms (room_number, room_name, capacity, location) VALUES (?, ?, ?, ?)", (r_num, r_name, r_cap, r_loc))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Success", f"Meeting room '{r_name}' added.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                        st.rerun()
+    if rooms:
+        room_options = {f"{r['room_name']} (Room {r['room_number']} - Capacity: {r['capacity']})": r['room_number'] for r in rooms}
+        selected_room_num = room_options[st.selectbox("Choose Target Room Venue", list(room_options.keys()))]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            book_date = st.date_input("Reservation Date", value=date.today())
+            b_start, b_end = st.time_input("Start Time", value=time(9, 0)), st.time_input("End Time", value=time(10, 0))
+        with col2:
+            recurrence = st.selectbox("Recurrence Pattern", ["None", "Daily", "Weekly", "Monthly"])
+            recurrence_end = st.date_input("Recurrence End Target", value=book_date + timedelta(days=7))
 
-    st.subheader("📅 Book a Meeting Room")
-    conn = get_db_connection()
-    rooms_list = [r['room_number'] for r in conn.execute("SELECT room_number FROM meeting_rooms").fetchall()]
-    conn.close()
-
-    if rooms_list:
-        with st.form("booking_form"):
-            b_room = st.selectbox("Select Room Number", options=rooms_list)
-            b_date = st.date_input("Booking Date", value=date.today())
-            b_start = st.time_input("Start Time", value=time(9, 0))
-            b_end = st.time_input("End Time", value=time(10, 0))
-            b_recurring = st.selectbox("Is Recurring Weekly?", ["No", "Yes"])
-            b_rec_end = st.date_input("Recurrence End Date", value=date.today() + timedelta(days=30))
+        if st.button("Confirm Room Block Assignment"):
+            target_dates = [book_date]
+            if recurrence != "None":
+                curr = book_date
+                while True:
+                    curr += timedelta(days=1 if recurrence == "Daily" else 7 if recurrence == "Weekly" else 30)
+                    if curr <= recurrence_end:
+                        target_dates.append(curr)
+                    else:
+                        break
             
-            submitted_booking = st.form_submit_button("Confirm Room Booking")
-            if submitted_booking:
-                try:
-                    conn = get_db_connection()
-                    conn.execute('''
-                        INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (b_room, st.session_state.username, b_date.strftime("%Y-%m-%d"), b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), b_recurring, b_rec_end.strftime("%Y-%m-%d")))
-                    conn.commit()
-                    conn.close()
-                    set_transaction_dialog("Booking Confirmed", "Room successfully booked.", "success")
-                except Exception as e:
-                    set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                st.rerun()
+            conn = get_db_connection()
+            conflict = False
+            for td in target_dates:
+                if conn.execute("SELECT * FROM room_bookings WHERE room_number = ? AND booking_date = ? AND NOT (start_time >= ? OR end_time <= ?)", (selected_room_num, td.strftime("%Y-%m-%d"), b_end.strftime("%H:%M"), b_start.strftime("%H:%M"))).fetchone():
+                    conflict = True
+                    break
+            
+            if conflict:
+                set_transaction_dialog("Data Transaction Unsuccessful", "Schedule conflict detected.", "error")
+            else:
+                for td in target_dates:
+                    conn.execute("INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date) VALUES (?, ?, ?, ?, ?, ?, ?)", (selected_room_num, st.session_state.username, td.strftime("%Y-%m-%d"), b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), recurrence, recurrence_end.strftime("%Y-%m-%d")))
+                conn.commit()
+                set_transaction_dialog("Data Transaction Successful", f"Room reserved for {len(target_dates)} date(s).", "success")
+            conn.close()
+            st.rerun()
 
-    st.subheader("📋 Active Room Bookings")
+    st.subheader("📊 Master Room Allocation Schedules")
     conn = get_db_connection()
-    bookings_df = pd.read_sql_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring' FROM room_bookings ORDER BY id DESC", conn)
+    bookings_df = pd.read_sql_query("SELECT b.id, r.room_name, b.room_number, b.booked_by, b.booking_date, b.start_time, b.end_time, b.is_recurring FROM room_bookings b JOIN meeting_rooms r ON b.room_number = r.room_number", conn)
     conn.close()
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
 
 # 7. SITE NEWS
 elif nav_selection == "📢 Site News":
-    st.header("📢 Site News & Announcements")
+    st.header("📢 TUCC PJ Batam Site News & Announcements")
+    is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
     
-    if st.session_state.role in ["Admin", "Owner"]:
-        with st.form("news_form"):
-            news_title = st.text_input("Announcement Title")
-            uploaded_file = st.file_uploader("Upload Document / Image Attachment", type=["pdf", "png", "jpg", "jpeg", "xlsx", "docx"])
-            submitted_news = st.form_submit_button("Publish Announcement")
-            
-            if submitted_news:
-                if news_title and uploaded_file:
-                    file_path = os.path.join(NEWS_DIR, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
-                    try:
-                        conn = get_db_connection()
-                        conn.execute('''
-                            INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.today().strftime("%Y-%m-%d")))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", "News announcement published successfully.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                    st.rerun()
+    if is_admin_or_owner:
+        with st.expander("📤 Upload New Site News Bulletin (Admin / Owner Only)", expanded=False):
+            with st.form("news_upload_form", clear_on_submit=True):
+                news_title = st.text_input("News Title / Description")
+                uploaded_news_file = st.file_uploader("Upload Bulletin File (PDF or PNG only)", type=["pdf", "png"])
+                news_submitted = st.form_submit_button("Publish Bulletin")
+                
+                if news_submitted:
+                    if not news_title.strip():
+                        set_transaction_dialog("Upload Unsuccessful", "Please provide a title for the news bulletin.", "error")
+                    elif uploaded_news_file is None:
+                        set_transaction_dialog("Upload Unsuccessful", "Please select a file to upload.", "error")
+                    else:
+                        file_ext = uploaded_news_file.name.split('.')[-1].lower()
+                        if file_ext not in ["pdf", "png"]:
+                            set_transaction_dialog("Upload Unsuccessful", "Only PDF and PNG files are allowed.", "error")
+                        else:
+                            try:
+                                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                safe_filename = f"{timestamp_str}_{uploaded_news_file.name}"
+                                file_path = os.path.join(NEWS_DIR, safe_filename)
+                                
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_news_file.getbuffer())
+                                    
+                                conn = get_db_connection()
+                                conn.execute('''
+                                    INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (news_title.strip(), uploaded_news_file.name, file_path, file_ext, st.session_state.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                                conn.commit()
+                                conn.close()
+                                
+                                set_transaction_dialog("Upload Successful", f"Bulletin '{news_title}' published successfully.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Upload Unsuccessful", f"Failed to save file: {str(e)}", "error")
+                            st.rerun()
 
+    st.subheader("📋 Published Site News Bulletins (Latest to Oldest)")
     conn = get_db_connection()
-    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
+    news_df = pd.read_sql_query("SELECT * FROM site_news ORDER BY id DESC", conn)
     conn.close()
     
     if not news_df.empty:
-        for _, n_row in news_df.iterrows():
+        for _, row in news_df.iterrows():
+            news_id, title, filename, file_path, file_type, uploaded_by, upload_date = row['id'], row['title'], row['filename'], row['file_path'], row['file_type'], row['uploaded_by'], row['upload_date']
             with st.container():
-                st.subheader(n_row['title'])
-                st.caption(f"Published by **{n_row['uploaded_by']}** on {n_row['upload_date']}")
-                if os.path.exists(n_row['file_path']):
-                    with open(n_row['file_path'], "rb") as f:
-                        st.download_button(f"📥 Download Attachment ({n_row['filename']})", data=f.read(), file_name=n_row['filename'], key=f"news_dl_{n_row['id']}")
+                st.markdown(f"#### 📌 {title}")
+                st.caption(f"Published by: **{uploaded_by}** on {upload_date}")
+                
+                if file_type == "pdf" and os.path.exists(file_path):
+                    with open(file_path, "rb") as pdf_file:
+                        PDFbyte = pdf_file.read()
+                    st.download_button(f"📥 Download PDF Bulletin ({filename})", data=PDFbyte, file_name=filename, mime="application/pdf", key=f"dl_news_{news_id}")
+                elif file_type == "png" and os.path.exists(file_path):
+                    st.image(file_path, caption=title, use_container_width=True)
+                
+                if is_admin_or_owner:
+                    if st.button(f"🗑️ Delete Bulletin #{news_id}", key=f"del_news_{news_id}", type="secondary"):
+                        try:
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM site_news WHERE id = ?", (news_id,))
+                            conn.commit()
+                            conn.close()
+                            set_transaction_dialog("Deletion Successful", f"Bulletin #{news_id} deleted successfully.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Deletion Unsuccessful", f"Failed to delete: {str(e)}", "error")
+                        st.rerun()
                 st.markdown("---")
     else:
-        st.info("No site news announcements posted yet.")
+        st.info("No site news bulletins published yet.")
 
 # 8. SYSTEM ADMINISTRATION
 elif nav_selection == "🛠️ System Administration":
-    st.header("🛠️ System Administration & Master Data Setup")
+    st.header("🛠️ System Administration & User Configuration")
+    is_admin = st.session_state.get("role", "") == "Admin"
     
-    if st.session_state.role not in ["Admin", "Owner"]:
-        st.error("Access Denied. Administrator credentials required.")
-        st.stop()
+    if not is_admin:
+        st.error("Access Denied. Administrator privileges are required to view this panel.")
+    else:
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["Users Management", "Fleet Vehicles", "Fleet Drivers", "Holidays Management", "Database Backup"])
+        
+        with tab1:
+            st.subheader("Manage System Users")
+            with st.form("add_user_form", clear_on_submit=True):
+                new_uname = st.text_input("Username")
+                new_pwd = st.text_input("Password", type="password")
+                new_role = st.selectbox("Role", ["Staff", "Admin", "Owner"])
+                new_emp_name = st.text_input("Full Employee Name")
+                new_email = st.text_input("Email Address")
+                if st.form_submit_button("Create User"):
+                    if new_uname and new_pwd:
+                        try:
+                            conn = get_db_connection()
+                            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?)", (new_uname, new_pwd, new_role, new_email, new_emp_name))
+                            conn.commit()
+                            conn.close()
+                            set_transaction_dialog("Success", f"User '{new_uname}' created.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
+                        st.rerun()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚗 Cars & Fleet", "👥 Drivers", "👥 Users", "📅 Holidays", "🗄️ Database Tools"])
-    
-    with tab1:
-        st.subheader("Manage Cars / Vehicles")
-        with st.form("car_add_form"):
-            c_name = st.text_input("Car Group Name (e.g. Car C)")
-            c_plate = st.text_input("Plate Number (e.g. B 9999 XYZ)")
-            c_model = st.text_input("Vehicle Model (e.g. Toyota Hi-Ace)")
-            c_color = st.text_input("Color", value="Black")
-            car_submitted = st.form_submit_button("Save Car Record")
-            if car_submitted:
-                if c_name and c_plate:
+            conn = get_db_connection()
+            users_df = pd.read_sql_query("SELECT username, role, email_recipients, emp_name FROM users", conn)
+            conn.close()
+            st.dataframe(users_df, use_container_width=True)
+
+        with tab2:
+            st.subheader("Manage Fleet Vehicles")
+            with st.form("add_car_form", clear_on_submit=True):
+                c_name = st.text_input("Group/Car Name (e.g. Car C)")
+                c_plate = st.text_input("Plate Number (e.g. B 9999 XYZ)")
+                c_model = st.text_input("Vehicle Model (e.g. Toyota HiACE)")
+                c_color = st.text_input("Color", value="Black")
+                if st.form_submit_button("Add Fleet Vehicle"):
+                    if c_name and c_plate:
+                        try:
+                            conn = get_db_connection()
+                            conn.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES (?, ?, ?, ?)", (c_name, c_plate, c_model, c_color))
+                            conn.commit()
+                            conn.close()
+                            set_transaction_dialog("Success", f"Vehicle '{c_name}' added.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
+                        st.rerun()
+
+            conn = get_db_connection()
+            cars_df = pd.read_sql_query("SELECT car_name AS 'Group/Car', plate_number AS 'Plate No.', vehicle AS 'Model', color AS 'Color' FROM cars", conn)
+            conn.close()
+            st.dataframe(cars_df, use_container_width=True)
+
+        with tab3:
+            st.subheader("Manage Fleet Drivers")
+            with st.form("add_driver_form", clear_on_submit=True):
+                d_name = st.text_input("Driver Full Name")
+                d_mob = st.text_input("Driver Mobile / Contact (+62...)")
+                if st.form_submit_button("Add Driver"):
+                    if d_name:
+                        try:
+                            conn = get_db_connection()
+                            conn.execute("INSERT INTO fleet_drivers VALUES (?, ?)", (d_name, d_mob))
+                            conn.commit()
+                            conn.close()
+                            set_transaction_dialog("Success", f"Driver '{d_name}' added.", "success")
+                        except Exception as e:
+                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
+                        st.rerun()
+
+            conn = get_db_connection()
+            drivers_df = pd.read_sql_query("SELECT driver_name AS 'Driver Name', driver_mobile AS 'Contact Number' FROM fleet_drivers", conn)
+            conn.close()
+            st.dataframe(drivers_df, use_container_width=True)
+
+        with tab4:
+            st.subheader("Manage Company Holidays")
+            with st.form("add_holiday_form", clear_on_submit=True):
+                h_date = st.date_input("Holiday Date", value=date.today())
+                h_desc = st.text_input("Holiday Description")
+                if st.form_submit_button("Add Holiday"):
                     try:
                         conn = get_db_connection()
-                        conn.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES (?, ?, ?, ?)", (c_name, c_plate, c_model, c_color))
+                        conn.execute("INSERT INTO holidays VALUES (?, ?)", (h_date.strftime("%Y-%m-%d"), h_desc))
                         conn.commit()
                         conn.close()
-                        set_transaction_dialog("Success", f"Car '{c_name}' added.", "success")
+                        set_transaction_dialog("Success", f"Holiday added for {h_date}.", "success")
                     except Exception as e:
                         set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
                     st.rerun()
-        
-        conn = get_db_connection()
-        cars_show_df = pd.read_sql_query("SELECT car_name AS 'Group', plate_number AS 'Plate Number', vehicle AS 'Vehicle', color AS 'Color' FROM cars", conn)
-        conn.close()
-        st.dataframe(cars_show_df, use_container_width=True)
 
-    with tab2:
-        st.subheader("Manage Fleet Drivers")
-        with st.form("driver_add_form"):
-            d_name = st.text_input("Driver Full Name")
-            d_mob = st.text_input("Mobile Number (e.g. +628...)")
-            driver_submitted = st.form_submit_button("Save Driver Record")
-            if driver_submitted:
-                if d_name:
-                    try:
-                        conn = get_db_connection()
-                        conn.execute("INSERT INTO fleet_drivers (driver_name, driver_mobile) VALUES (?, ?)", (d_name, d_mob))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", f"Driver '{d_name}' added.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                    st.rerun()
-        
-        conn = get_db_connection()
-        drivers_show_df = pd.read_sql_query("SELECT driver_name AS 'Driver Name', driver_mobile AS 'Mobile Number' FROM fleet_drivers", conn)
-        conn.close()
-        st.dataframe(drivers_show_df, use_container_width=True)
+            conn = get_db_connection()
+            holidays_df = pd.read_sql_query("SELECT holiday_date AS 'Date', description AS 'Description' FROM holidays ORDER BY holiday_date DESC", conn)
+            conn.close()
+            st.dataframe(holidays_df, use_container_width=True)
 
-    with tab3:
-        st.subheader("Manage Portal Users & Staff Names")
-        with st.form("user_add_form"):
-            u_name = st.text_input("Username")
-            u_pass = st.text_input("Password", type="password")
-            u_role = st.selectbox("Role", ["Staff", "Admin", "Owner"])
-            u_emp = st.text_input("Employee Full Name")
-            u_email = st.text_input("Email")
-            user_submitted = st.form_submit_button("Create User Profile")
-            if user_submitted:
-                if u_name and u_pass:
-                    try:
-                        conn = get_db_connection()
-                        conn.execute("INSERT INTO users (username, password, role, email_recipients, emp_name) VALUES (?, ?, ?, ?, ?)", (u_name, u_pass, u_role, u_email, u_emp))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", f"User '{u_name}' created.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                    st.rerun()
-        
-        conn = get_db_connection()
-        users_show_df = pd.read_sql_query("SELECT username AS 'Username', role AS 'Role', emp_name AS 'Employee Name', email_recipients AS 'Email' FROM users", conn)
-        conn.close()
-        st.dataframe(users_show_df, use_container_width=True)
-
-    with tab4:
-        st.subheader("Manage Holidays")
-        with st.form("holiday_add_form"):
-            h_date = st.date_input("Holiday Date")
-            h_desc = st.text_input("Holiday Description")
-            holiday_submitted = st.form_submit_button("Save Holiday")
-            if holiday_submitted:
-                if h_date:
-                    try:
-                        conn = get_db_connection()
-                        conn.execute("INSERT INTO holidays (holiday_date, description) VALUES (?, ?)", (h_date.strftime("%Y-%m-%d"), h_desc))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", "Holiday added.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
-                    st.rerun()
-        
-        conn = get_db_connection()
-        holidays_show_df = pd.read_sql_query("SELECT holiday_date AS 'Date', description AS 'Description' FROM holidays", conn)
-        conn.close()
-        st.dataframe(holidays_show_df, use_container_width=True)
-
-    with tab5:
-        st.subheader("Database Export & Backup Tools")
-        st.write("You can download an immediate snapshot of all database tables as an Excel workbook.")
-        if st.button("📥 Download Full Database Backup (.xlsx)"):
-            try:
-                conn = get_db_connection()
-                backup_buffer = io.BytesIO()
-                with pd.ExcelWriter(backup_buffer, engine='openpyxl') as writer:
-                    for tbl in ["daily_transit", "overtime_requests", "room_bookings", "users", "cars", "trips", "site_news", "transit_passengers", "holidays", "meeting_rooms", "fleet_drivers", "transit_groups"]:
-                        pd.read_sql_query(f"SELECT * FROM {tbl}", conn).to_excel(writer, index=False, sheet_name=tbl)
-                conn.close()
+        with tab5:
+            st.subheader("Database Backup & Export")
+            st.write("Download a full backup of the SQLite database and an Excel workbook containing all system tables.")
+            
+            if os.path.exists(DB_FILE):
+                with open(DB_FILE, "rb") as db_f:
+                    db_bytes = db_f.read()
                 st.download_button(
-                    "Download Workbook Snapshot",
-                    data=backup_buffer.getvalue(),
-                    file_name=f"database_full_backup_{datetime.today().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    "📥 Download SQLite Database File (.db)",
+                    data=db_bytes,
+                    file_name=f"office_operations_backup_{datetime.today().strftime('%Y%m%d')}.db",
+                    mime="application/octet-stream",
+                    use_container_width=True
                 )
-            except Exception as e:
-                st.error(f"Backup failed: {str(e)}")
+            
+            if st.button("📥 Generate & Download All Tables Excel Backup", use_container_width=True):
+                try:
+                    conn = get_db_connection()
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        pd.read_sql_query("SELECT * FROM daily_transit", conn).to_excel(writer, index=False, sheet_name="daily_transit")
+                        pd.read_sql_query("SELECT * FROM overtime_requests", conn).to_excel(writer, index=False, sheet_name="overtime_requests")
+                        pd.read_sql_query("SELECT * FROM room_bookings", conn).to_excel(writer, index=False, sheet_name="room_bookings")
+                        pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
+                        pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
+                        pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
+                        pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
+                        pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
+                        pd.read_sql_query("SELECT * FROM holidays", conn).to_excel(writer, index=False, sheet_name="holidays")
+                        pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
+                        pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
+                        pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
+                    conn.close()
+                    
+                    st.download_button(
+                        "📥 Click to Save All Tables Excel File",
+                        data=excel_buffer.getvalue(),
+                        file_name=f"complete_system_data_backup_{datetime.today().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Failed to generate Excel backup: {e}")
