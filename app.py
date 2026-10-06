@@ -696,7 +696,7 @@ if not st.session_state.logged_in:
 # ==============================================================================
 # 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Mobile Optimized & Left-Aligned)
 # ==============================================================================
-st.sidebar.title(f"👋 Welcome, {st.session_state.username}")
+st.sidebar.title(f"👋 Welcome, {st.session_state.emp_name}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 
 st.sidebar.markdown("---")
