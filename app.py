@@ -1710,7 +1710,7 @@ elif nav_selection == "📢 Site News":
     else:
         st.info("No site news bulletins published yet.")
 
-# 8. SYSTEM ADMINISTRATION (Owner-only backup/restore, plus Admin/Owner data imports)
+# 8. SYSTEM ADMINISTRATION (Owner-only backup/restore, plus Admin/Owner data imports & templates)
 elif nav_selection == "🛠️ System Administration":
     st.header("🛠️ System Administration & Data Management")
     current_role = st.session_state.get("role", "")
@@ -1766,9 +1766,9 @@ elif nav_selection == "🛠️ System Administration":
                         st.rerun()
             st.markdown("---")
 
-        # Data Import Functions for All Tables (Available to Admin & Owner)
-        st.subheader("📥 Data Import Center (Upload Excel / CSV to Tables)")
-        st.write("Select a target table and upload an Excel (.xlsx) or CSV file matching table columns to bulk import records.")
+        # Data Import Functions & Import Template Downloads for All Tables (Available to Admin & Owner)
+        st.subheader("📥 Data Import Center & Template Downloads")
+        st.write("Download the import template for your chosen table, fill in your data, and upload it back to bulk import records.")
 
         table_import_options = {
             "daily_transit": "Daily Transit Dispatches",
@@ -1785,8 +1785,22 @@ elif nav_selection == "🛠️ System Administration":
             "site_news": "Site News"
         }
 
-        selected_import_tbl_key = st.selectbox("Select Target Table for Import", list(table_import_options.keys()), format_func=lambda x: table_import_options[x])
-        import_file = st.file_uploader(f"Upload Data File for [{table_import_options[selected_import_tbl_key]}]", type=["xlsx", "csv"], key=f"import_file_{selected_import_tbl_key}")
+        selected_import_tbl_key = st.selectbox("Select Target Table", list(table_import_options.keys()), format_func=lambda x: table_import_options[x])
+
+        # Generate and provide template download button for the selected table
+        conn = get_db_connection()
+        template_df = pd.read_sql_query(f"SELECT * FROM {selected_import_tbl_key} LIMIT 0", conn)
+        conn.close()
+
+        st.download_button(
+            label=f"📥 Download Import Template for [{table_import_options[selected_import_tbl_key]}]",
+            data=export_df_to_excel(template_df, sheet_name=selected_import_tbl_key),
+            file_name=f"import_template_{selected_import_tbl_key}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+        import_file = st.file_uploader(f"Upload Completed Data File for [{table_import_options[selected_import_tbl_key]}]", type=["xlsx", "csv"], key=f"import_file_{selected_import_tbl_key}")
 
         if import_file is not None:
             try:
