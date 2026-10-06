@@ -128,32 +128,6 @@ def format_military_time(input_str: str) -> str:
             return f"{hours:02d}:{minutes:02d}"
     return None
 
-def render_datalist_options(list_id: str, options: list):
-    options_html = "".join([f'<option value="{opt}">' for opt in options if opt])
-    st.components.v1.html(
-        f"""
-        <script>
-        const parentDoc = window.parent.document;
-        let dl = parentDoc.getElementById('{list_id}');
-        if (!dl) {{
-            dl = parentDoc.createElement('datalist');
-            dl.id = '{list_id}';
-            parentDoc.body.appendChild(dl);
-        }}
-        dl.innerHTML = '{options_html}';
-        
-        const inputs = parentDoc.querySelectorAll('input[type="text"]');
-        inputs.forEach(input => {{
-            if (input.placeholder && input.placeholder.includes('{list_id}')) {{
-                input.setAttribute('list', '{list_id}');
-            }}
-        }});
-        </script>
-        """,
-        height=0,
-        width=0
-    )
-
 def export_df_to_excel(df, sheet_name="Data"):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -1375,715 +1349,421 @@ elif nav_selection == "👥 Transit Groups & Passengers":
             if not passengers_raw.empty:
                 for _, p_row in passengers_raw.iterrows():
                     p_id, p_grp, p_name = p_row['id'], p_row['group_name'], p_row['passengers']
-                    p_col1, p_col2, p_col3 = st.columns([2, 2, 1])
+                    p_col1, p_col2 = st.columns([4, 1])
                     with p_col1:
-                        st.text(f"Group: {p_grp}")
+                        st.text(f"Group: {p_grp} | Passenger: {p_name}")
                     with p_col2:
-                        st.text(f"Passenger: {p_name}")
-                    with p_col3:
-                        if st.button("🗑️️ Remove", key=f"del_passenger_{p_id}", type="primary"):
+                        if st.button("🗑️ Remove", key=f"del_passenger_{p_id}", type="primary"):
                             try:
                                 conn = get_db_connection()
                                 conn.execute("DELETE FROM transit_passengers WHERE id = ?", (p_id,))
                                 conn.commit()
                                 conn.close()
-                                set_transaction_dialog("Deletion Successful", f"Removed passenger '{p_name}' from group '{p_grp}'.", "success")
+                                set_transaction_dialog("Deletion Successful", f"Passenger assignment #{p_id} removed.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                             st.rerun()
-            else:
-                st.info("No passenger assignments found.")
 
-        col_ex, col_pdf, col_wa = st.columns(3)
-        with col_ex:
+        st.markdown("##### 📥 Export Passenger List")
+        dl_col1, dl_col2 = st.columns(2)
+        with dl_col1:
             st.download_button(
-                "📥 Export to Excel (.xlsx)", 
-                data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str), 
-                file_name=f"Daily_Transportation_Arrangement_TUCC_{eff_date_str}.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                "📥 Export Passenger List to Excel (.xlsx)",
+                data=export_custom_batam_excel(unrolled_df, effective_date_str=eff_date_str),
+                file_name=f"Daily_Transportation_Arrangement_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
-        with col_pdf:
+        with dl_col2:
             if HAS_REPORTLAB:
                 st.download_button(
-                    "📄 Export to PDF (.pdf)", 
-                    data=export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str), 
-                    file_name=f"Daily_Transportation_Arrangement_TUCC_{eff_date_str}.pdf", 
-                    mime="application/pdf", 
+                    "📄 Export Passenger List to PDF (.pdf)",
+                    data=export_custom_batam_pdf(unrolled_df, effective_date_str=eff_date_str),
+                    file_name=f"Daily_Transportation_Arrangement_{datetime.today().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
                     use_container_width=True
                 )
-        with col_wa:
-            wa_message = urllib.parse.quote(
-                f"📢 *TUCC PJ Batam - Daily Transportation Arrangement*\n"
-                f"📅 Effective Date: {eff_date_str}\n"
-                f"Please find the attached passenger layout schedule above."
-            )
-            wa_url = f"https://wa.me/?text={wa_message}"
-            st.link_button(
-                "💬 Share on WhatsApp", 
-                url=wa_url, 
-                use_container_width=True
-            )
 
 # 5. DAILY TRANSIT DISPATCH SETUP
 elif nav_selection == "📅 Daily Transit Dispatch Setup":
-    st.header("📅 Daily Transit Dispatch Schedule & Route Setting")
-    conn = get_db_connection()
-    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
-    cars_db_df = pd.read_sql_query("SELECT car_name, plate_number, vehicle FROM cars", conn)
-    trips_db_df = pd.read_sql_query("SELECT trip, trip_name FROM trips ORDER BY trip", conn)
-    origins_df = pd.read_sql_query("SELECT DISTINCT location_from FROM daily_transit WHERE location_from IS NOT NULL", conn)
-    dests_df = pd.read_sql_query("SELECT DISTINCT location_to FROM daily_transit WHERE location_to IS NOT NULL", conn)
-    conn.close()
+    st.header("📅 Daily Transit Dispatch Schedule Setup")
     
-    default_locations = ["Yard-1 Office", "Yard-3 Office", "Panbil", "Batam Center", "Hang Nadim Airport"]
-    origin_list = sorted(list(set(default_locations + origins_df['location_from'].tolist())))
-    dest_list = sorted(list(set(default_locations + dests_df['location_to'].tolist())))
-    render_datalist_options("origin_list_dl", origin_list)
-    render_datalist_options("dest_list_dl", dest_list)
-
-    current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
-    if not all_emp_names:
-        all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
-    default_req_by = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
-    is_admin_or_owner = st.session_state.get("role", "") in ["Admin", "Owner"]
-
-    trip_option_labels = [f"{r['trip']} ({r['trip_name']})" for _, r in trips_db_df.iterrows()] if not trips_db_df.empty else ["Trip A (Yard to Yard)"]
-    trip_code_map = {lbl: lbl.split(" (")[0] for lbl in trip_option_labels}
-
-    car_option_labels = ["TBA - To Be Assigned"] + [f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "") for _, r in cars_db_df.iterrows() if r['car_name'] != 'TBA']
-    car_label_to_group = {"TBA - To Be Assigned": "TBA"}
-    for _, r in cars_db_df.iterrows():
-        lbl = f"{r['car_name']} - {r['plate_number']}" + (f" ({r['vehicle']})" if r['vehicle'] else "")
-        car_label_to_group[lbl] = r['car_name']
-
-    if "dispatch_reset_counter" not in st.session_state:
-        st.session_state.dispatch_reset_counter = 0
-    reset_id = st.session_state.dispatch_reset_counter
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Configure Transit Request")
-        requested_by = st.selectbox("Requested By", options=all_emp_names, index=all_emp_names.index(default_req_by), key=f"dt_req_{reset_id}")
-        selected_trip_label = st.selectbox("Trip Category", options=trip_option_labels, index=0, key=f"dt_trip_{reset_id}")
-        selected_trip_code = trip_code_map.get(selected_trip_label, "Trip A")
-
-        is_daily = st.selectbox("Daily / Recurring Journey?", options=["No", "Yes"] if is_admin_or_owner else ["No"], index=0, disabled=not is_admin_or_owner, key=f"dt_daily_{reset_id}")
-        dispatch_date_start = st.date_input("Select Transit Start Date", value=date.today(), min_value=date.today(), key=f"reg_dt_start_{reset_id}")
-        
-        if is_daily == "Yes":
-            dispatch_date_end = st.date_input("Select Transit End Date", value=dispatch_date_start + timedelta(days=1), min_value=dispatch_date_start + timedelta(days=1), key=f"reg_dt_end_{reset_id}")
-        else:
-            dispatch_date_end = dispatch_date_start
-
-        location_from = st.text_input("Origin Location", value="Yard-1 Office" if reset_id == 0 else "", placeholder="[origin_list_dl] Type origin...", key=f"txt_origin_{reset_id}")
-        location_to = st.text_input("Target Location", value="Yard-3 Office" if reset_id == 0 else "", placeholder="[dest_list_dl] Type target...", key=f"txt_dest_{reset_id}")
-
-    with col2:
-        st.subheader("Schedule & Vehicle Allocation")
-        raw_etd1 = st.text_input("ETD 1 (Start Time)", value="08:00" if reset_id == 0 else "", placeholder="0800", key=f"etd1_{reset_id}")
-        raw_etd2 = st.text_input("ETD 2 (Return Time)", value="17:00" if reset_id == 0 else "", placeholder="1700", key=f"etd2_{reset_id}")
-        selected_car_label = st.selectbox("Assigned Group / Car Name", options=car_option_labels, index=0, disabled=not is_admin_or_owner, key=f"car_{reset_id}")
-        selected_group = car_label_to_group.get(selected_car_label, "TBA") if is_admin_or_owner else "TBA"
-
-    b_col1, b_col2 = st.columns([1, 4])
-    with b_col1:
-        if st.button("Submit Transit Request", type="primary"):
-            fmt_etd1, fmt_etd2 = format_military_time(raw_etd1), format_military_time(raw_etd2)
-            if not fmt_etd1 or not fmt_etd2:
-                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD Time format.", "error")
+    with st.form("transit_dispatch_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=date.today())
+            end_date = st.date_input("End Date", value=date.today())
+            
+            conn = get_db_connection()
+            car_names = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
+            trip_options = [t['trip'] for t in conn.execute("SELECT trip FROM trips").fetchall()]
+            conn.close()
+            
+            group_name = st.selectbox("Assign Car / Group", options=car_names if car_names else ["TBA"])
+            trip_type = st.selectbox("Trip Schedule Category", options=trip_options if trip_options else ["Trip A"])
+            daily_repeat = st.selectbox("Repeat Daily?", options=["No", "Yes"])
+            
+        with col2:
+            raw_etd1 = st.text_input("ETD 1 (From) [e.g. 0545 or 05:45]", value="05:45")
+            raw_etd2 = st.text_input("ETD 2 (To) [e.g. 1730 or 17:30]", value="17:30")
+            loc_from = st.text_input("Origin Location", value="Yard-1 Office")
+            loc_to = st.text_input("Destination Location", value="Panbil")
+            
+        submitted_transit = st.form_submit_button("Create Transit Dispatch Entry")
+        if submitted_transit:
+            etd1_fmt, etd2_fmt = format_military_time(raw_etd1), format_military_time(raw_etd2)
+            if not etd1_fmt or not etd2_fmt:
+                set_transaction_dialog("Data Transaction Unsuccessful", "Invalid ETD time format.", "error")
             else:
                 try:
                     conn = get_db_connection()
                     conn.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (dispatch_date_start.strftime("%Y-%m-%d"), dispatch_date_end.strftime("%Y-%m-%d"), selected_group, requested_by, fmt_etd1, fmt_etd2, location_from, location_to, is_daily, selected_trip_code))
+                    ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), group_name, st.session_state.username, etd1_fmt, etd2_fmt, loc_from, loc_to, daily_repeat, trip_type))
                     conn.commit()
                     conn.close()
-                    st.session_state.dispatch_reset_counter += 1
-                    set_transaction_dialog("Data Transaction Successful", "Daily transit dispatch schedule successfully saved.", "success")
+                    set_transaction_dialog("Data Transaction Successful", "Transit dispatch schedule successfully logged.", "success")
                 except Exception as e:
                     set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
 
-    st.markdown("---")
-    st.subheader("📋 Configured Daily Transit Dispatches")
+    st.subheader("📋 Active Daily Transit Dispatches")
     conn = get_db_connection()
-    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS 'Start Date', transit_date_end AS 'End Date', group_name AS 'Group', requested_by AS 'Requested By', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', location_from AS 'From', location_to AS 'To', daily AS 'Daily', trip AS 'Trip' FROM daily_transit ORDER BY id DESC", conn)
+    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS 'Start', transit_date_end AS 'End', group_name AS 'Car Group', requested_by AS 'Requested By', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', location_from AS 'From', location_to AS 'To', daily AS 'Daily', trip AS 'Trip' FROM daily_transit ORDER BY id DESC", conn)
     conn.close()
     
     if not transit_df.empty:
         st.dataframe(transit_df, use_container_width=True)
         
-        if is_admin_or_owner:
-            with st.expander("✏️ Manage / Remove Transit Dispatch Schedules"):
+        if st.session_state.role in ["Admin", "Owner"]:
+            with st.expander("✏️ Manage / Remove Transit Dispatches"):
                 conn = get_db_connection()
-                dt_raw = pd.read_sql_query("SELECT id, transit_date_start, group_name, requested_by FROM daily_transit ORDER BY id DESC", conn)
+                t_raw = pd.read_sql_query("SELECT id, transit_date_start, group_name, trip FROM daily_transit ORDER BY id DESC", conn)
                 conn.close()
-                
-                for _, dt_row in dt_raw.iterrows():
-                    d_id, d_date, d_grp, d_req = dt_row['id'], dt_row['transit_date_start'], dt_row['group_name'], dt_row['requested_by']
-                    d_col1, d_col2 = st.columns([4, 1])
-                    with d_col1:
-                        st.text(f"ID #{d_id} | Date: {d_date} | Group: {d_grp} | Req: {d_req}")
-                    with d_col2:
-                        if st.button("🗑️ Remove", key=f"del_dt_{d_id}", type="primary"):
+                for _, tr_row in t_raw.iterrows():
+                    tr_id, tr_date, tr_grp, tr_trip = tr_row['id'], tr_row['transit_date_start'], tr_row['group_name'], tr_row['trip']
+                    tc1, tc2 = st.columns([4, 1])
+                    with tc1:
+                        st.text(f"ID #{tr_id} | Date: {tr_date} | Car: {tr_grp} | Trip: {tr_trip}")
+                    with tc2:
+                        if st.button("🗑️ Remove", key=f"del_transit_{tr_id}", type="primary"):
                             try:
                                 conn = get_db_connection()
-                                conn.execute("DELETE FROM daily_transit WHERE id = ?", (d_id,))
+                                conn.execute("DELETE FROM daily_transit WHERE id = ?", (tr_id,))
                                 conn.commit()
                                 conn.close()
-                                set_transaction_dialog("Deletion Successful", f"Removed transit dispatch #{d_id}.", "success")
+                                set_transaction_dialog("Deletion Successful", f"Removed transit dispatch #{tr_id}.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                             st.rerun()
-        
-        st.download_button("📥 Export Transit Dispatch Log to Excel (.xlsx)", data=export_df_to_excel(transit_df, sheet_name="Daily_Transit"), file_name=f"Daily_Transit_Dispatches_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        st.download_button("📥 Export Daily Transit to Excel (.xlsx)", data=export_df_to_excel(transit_df, sheet_name="Daily_Transit"), file_name=f"Daily_Transit_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # 6. MEETING ROOMS
 elif nav_selection == "🏢 Meeting Rooms":
-    st.header("🏢 Meeting Rooms & Reservations")
+    st.header("🏢 Meeting Room Booking Portal")
     conn = get_db_connection()
-    rooms_df = pd.read_sql_query("SELECT room_number, room_name, capacity, location FROM meeting_rooms", conn)
-    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
+    rooms_df = pd.read_sql_query("SELECT room_number AS 'Room Number', room_name AS 'Room Name', capacity AS 'Capacity', location AS 'Location' FROM meeting_rooms", conn)
     conn.close()
-
-    current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
-    if not all_emp_names:
-        all_emp_names = [current_user_emp] if current_user_emp else ["Default Employee"]
-    default_booker = current_user_emp if current_user_emp in all_emp_names else all_emp_names[0]
-
-    room_options = [f"{r['room_number']} - {r['room_name']} (Cap: {r['capacity']})" for _, r in rooms_df.iterrows()] if not rooms_df.empty else []
-    room_map = {opt: opt.split(" - ")[0] for opt in room_options}
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Book Meeting Room")
-        if room_options:
-            selected_room_lbl = st.selectbox("Select Room", options=room_options)
-            selected_room_no = room_map.get(selected_room_lbl, "101")
-            booked_by = st.selectbox("Booked By", options=all_emp_names, index=all_emp_names.index(default_booker))
-            booking_date = st.date_input("Booking Date", value=date.today())
-            
-            b_start = st.time_input("Start Time", value=time(9, 0))
-            b_end = st.time_input("End Time", value=time(10, 0))
-            is_recurring = st.selectbox("Recurring Weekly Booking?", ["No", "Yes"])
-            
-            rec_end_date = None
-            if is_recurring == "Yes":
-                rec_end_date = st.date_input("Recurrence End Date", value=date.today() + timedelta(days=30))
-                
-            if st.button("Confirm Room Booking"):
-                try:
-                    conn = get_db_connection()
-                    conn.execute('''
-                        INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (selected_room_no, booked_by, booking_date.strftime("%Y-%m-%d"), b_start.strftime("%H:%M"), b_end.strftime("%H:%M"), is_recurring, rec_end_date.strftime("%Y-%m-%d") if rec_end_date else ""))
-                    conn.commit()
-                    conn.close()
-                    set_transaction_dialog("Data Transaction Successful", "Meeting room successfully booked.", "success")
-                except Exception as e:
-                    set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
-                st.rerun()
-        else:
-            st.info("No meeting rooms configured in system.")
-
-    with col2:
-        if st.session_state.role in ["Admin", "Owner"]:
-            st.subheader("Add New Meeting Room")
-            new_r_num = st.text_input("Room Number / Code")
-            new_r_name = st.text_input("Room Name")
-            new_r_cap = st.number_input("Capacity", min_value=1, value=10)
-            new_r_loc = st.text_input("Location / Floor")
-            
-            if st.button("Save New Room"):
-                if not new_r_num or not new_r_name:
-                    set_transaction_dialog("Unsuccessful", "Room Number and Name are required.", "error")
-                else:
-                    try:
-                        conn = get_db_connection()
-                        conn.execute("INSERT INTO meeting_rooms VALUES (?, ?, ?, ?)", (new_r_num, new_r_name, new_r_cap, new_r_loc))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Success", f"Meeting room '{new_r_name}' added.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Unsuccessful", f"Failed: {str(e)}", "error")
-                    st.rerun()
-
+    
+    st.subheader("Available Meeting Rooms")
+    st.dataframe(rooms_df, use_container_width=True)
+    
     st.markdown("---")
+    st.subheader("Book a Meeting Room")
+    with st.form("room_booking_form"):
+        conn = get_db_connection()
+        r_nums = [r['room_number'] for r in conn.execute("SELECT room_number FROM meeting_rooms").fetchall()]
+        conn.close()
+        
+        selected_room = st.selectbox("Select Room Number", options=r_nums if r_nums else ["101"])
+        booking_date = st.date_input("Booking Date", value=date.today())
+        start_t = st.time_input("Start Time", value=time(9, 0))
+        end_t = st.time_input("End Time", value=time(10, 0))
+        is_recurring = st.selectbox("Is Recurring Weekly?", ["No", "Yes"])
+        rec_end_date = st.date_input("Recurrence End Date (if recurring)", value=date.today())
+        
+        submitted_booking = st.form_submit_button("Confirm Room Booking")
+        if submitted_booking:
+            try:
+                conn = get_db_connection()
+                conn.execute('''
+                    INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (selected_room, st.session_state.username, booking_date.strftime("%Y-%m-%d"), start_t.strftime("%H:%M"), end_t.strftime("%H:%M"), is_recurring, rec_end_date.strftime("%Y-%m-%d") if is_recurring == "Yes" else ""))
+                conn.commit()
+                conn.close()
+                set_transaction_dialog("Booking Successful", f"Meeting room {selected_room} booked successfully.", "success")
+            except Exception as e:
+                set_transaction_dialog("Booking Unsuccessful", f"Failed: {str(e)}", "error")
+            st.rerun()
+
     st.subheader("📋 Active Room Bookings")
     conn = get_db_connection()
-    bookings_df = pd.read_sql_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring', recurrence_end_date AS 'Recur. End' FROM room_bookings ORDER BY id DESC", conn)
+    bookings_df = pd.read_sql_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring', recurrence_end_date AS 'Recurrence End' FROM room_bookings ORDER BY id DESC", conn)
     conn.close()
-
+    
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
-        
-        with st.expander("✏️ Manage / Remove Room Bookings"):
-            conn = get_db_connection()
-            b_raw = pd.read_sql_query("SELECT id, room_number, booking_date, booked_by FROM room_bookings ORDER BY id DESC", conn)
-            conn.close()
-            
-            for _, b_row in b_raw.iterrows():
-                b_id, b_room, b_date, b_by = b_row['id'], b_row['room_number'], b_row['booking_date'], b_row['booked_by']
-                bc1, bc2 = st.columns([4, 1])
-                with bc1:
-                    st.text(f"Booking ID #{b_id} | Room: {b_room} | Date: {b_date} | Booker: {b_by}")
-                with bc2:
-                    if st.button("🗑️ Remove", key=f"del_booking_{b_id}", type="primary"):
-                        try:
-                            conn = get_db_connection()
-                            conn.execute("DELETE FROM room_bookings WHERE id = ?", (b_id,))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Deletion Successful", f"Removed booking #{b_id}.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
-                        st.rerun()
-    else:
-        st.info("No room bookings found.")
+        if st.session_state.role in ["Admin", "Owner"]:
+            with st.expander("✏️ Manage / Remove Room Bookings"):
+                conn = get_db_connection()
+                b_raw = pd.read_sql_query("SELECT id, room_number, booking_date FROM room_bookings", conn)
+                conn.close()
+                for _, b_row in b_raw.iterrows():
+                    b_id, b_room, b_date = b_row['id'], b_row['room_number'], b_row['booking_date']
+                    bc1, bc2 = st.columns([4, 1])
+                    with bc1:
+                        st.text(f"ID #{b_id} | Room: {b_room} | Date: {b_date}")
+                    with bc2:
+                        if st.button("🗑️ Remove", key=f"del_booking_{b_id}", type="primary"):
+                            try:
+                                conn = get_db_connection()
+                                conn.execute("DELETE FROM room_bookings WHERE id = ?", (b_id,))
+                                conn.commit()
+                                conn.close()
+                                set_transaction_dialog("Deletion Successful", f"Removed booking #{b_id}.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
+                            st.rerun()
 
 # 7. SITE NEWS
 elif nav_selection == "📢 Site News":
-    st.header("📢 Site News & Operational Bulletins")
+    st.header("📢 Site News & Announcements")
     
     if st.session_state.role in ["Admin", "Owner"]:
-        st.subheader("Upload New Bulletin / Document")
-        with st.form("news_upload_form"):
-            news_title = st.text_input("Bulletin Title")
-            uploaded_file = st.file_uploader("Upload Document (PDF, Image, Excel)", type=["pdf", "png", "jpg", "jpeg", "xlsx"])
-            submitted_news = st.form_submit_button("Publish Bulletin")
+        with st.form("upload_news_form"):
+            news_title = st.text_input("Announcement Title")
+            uploaded_file = st.file_uploader("Upload Document / Notice (PDF, Excel, Images)", type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"])
+            submitted_news = st.form_submit_button("Publish Announcement")
             
             if submitted_news:
                 if not news_title or not uploaded_file:
-                    set_transaction_dialog("Unsuccessful", "Title and File are required.", "error")
+                    set_transaction_dialog("Publication Unsuccessful", "Title and file upload cannot be blank.", "error")
                 else:
                     try:
                         file_path = os.path.join(NEWS_DIR, uploaded_file.name)
                         with open(file_path, "wb") as f:
                             f.write(uploaded_file.getbuffer())
-                            
+                        
                         conn = get_db_connection()
                         conn.execute('''
                             INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
                             VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                        ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.today().strftime("%Y-%m-%d")))
                         conn.commit()
                         conn.close()
-                        set_transaction_dialog("Success", "Bulletin published successfully.", "success")
+                        set_transaction_dialog("Publication Successful", "Site news published successfully.", "success")
                     except Exception as e:
-                        set_transaction_dialog("Unsuccessful", f"Failed: {str(e)}", "error")
-                    st.rerun()
+                        set_transaction_dialog("Publication Unsuccessful", f"Failed: {str(e)}", "error")
+                st.rerun()
 
-    st.markdown("---")
-    st.subheader("📋 Published Operational Bulletins")
     conn = get_db_connection()
-    news_df = pd.read_sql_query("SELECT id, title, filename, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
+    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
     conn.close()
-
+    
     if not news_df.empty:
         for _, n_row in news_df.iterrows():
-            n_id, n_title, n_file, n_by, n_date = n_row['id'], n_row['title'], n_row['filename'], n_row['uploaded_by'], n_row['upload_date']
-            with st.expander(f"📌 {n_title} (Published: {n_date} by {n_by})"):
-                conn = get_db_connection()
-                full_n = conn.execute("SELECT file_path, file_type FROM site_news WHERE id = ?", (n_id,)).fetchone()
-                conn.close()
-                
-                if full_n and os.path.exists(full_n['file_path']):
-                    with open(full_n['file_path'], "rb") as f:
+            n_id, n_title, n_fname, n_fpath, n_author, n_date = n_row['id'], n_row['title'], n_row['filename'], n_row['file_path'], n_row['uploaded_by'], n_row['upload_date']
+            with st.container():
+                st.subheader(n_title)
+                st.caption(f"Published by: {n_author} on {n_date}")
+                if os.path.exists(n_fpath):
+                    with open(n_fpath, "rb") as f:
                         file_bytes = f.read()
-                    st.download_button(f"📥 Download {n_file}", data=file_bytes, file_name=n_file, mime=full_n['file_type'], key=f"dl_news_{n_id}")
-                
+                    st.download_button(f"📥 Download {n_fname}", data=file_bytes, file_name=n_fname, key=f"dl_news_{n_id}")
                 if st.session_state.role in ["Admin", "Owner"]:
-                    if st.button("🗑️ Delete Bulletin", key=f"del_news_{n_id}", type="primary"):
+                    if st.button("🗑️ Delete Announcement", key=f"del_news_{n_id}", type="secondary"):
                         try:
-                            if full_n and os.path.exists(full_n['file_path']):
-                                os.remove(full_n['file_path'])
+                            if os.path.exists(n_fpath):
+                                os.remove(n_fpath)
                             conn = get_db_connection()
                             conn.execute("DELETE FROM site_news WHERE id = ?", (n_id,))
                             conn.commit()
                             conn.close()
-                            set_transaction_dialog("Deleted", f"Removed bulletin '{n_title}'.", "success")
+                            set_transaction_dialog("Deletion Successful", "Announcement removed.", "success")
                         except Exception as e:
-                            set_transaction_dialog("Error", f"Failed: {str(e)}", "error")
+                            set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                         st.rerun()
+                st.markdown("---")
     else:
-        st.info("No site news bulletins published yet.")
+        st.info("No site news announcements published yet.")
 
 # 8. SYSTEM ADMINISTRATION
 elif nav_selection == "🛠️ System Administration":
-    st.header("🛠️ System Administration & Database Maintenance")
+    st.header("🛠️ System Administration & Master Data Management")
     
     if st.session_state.role not in ["Admin", "Owner"]:
-        st.error("Access Denied. You must be an Administrator or Owner to access system administration tools.")
-        st.stop()
-
-    st.subheader("💾 Backup & Recovery")
-    col_b1, col_b2 = st.columns(2)
-    with col_b1:
-        if st.button("🔄 Perform Instant Database Backup"):
-            success, db_bk, ex_bk = perform_manual_backup()
-            if success:
-                set_transaction_dialog("Backup Successful", f"Database backup saved at:\n{db_bk}\nExcel export saved at:\n{ex_bk}", "success")
-            else:
-                set_transaction_dialog("Backup Failed", f"Error: {db_bk}", "error")
-            st.rerun()
-
-    with col_b2:
-        if os.path.exists(BACKUP_DIR):
-            backups_list = sorted(os.listdir(BACKUP_DIR), reverse=True)
-            if backups_list:
-                selected_bk = st.selectbox("Select Backup File to Download", backups_list)
-                if selected_bk:
-                    bk_full_path = os.path.join(BACKUP_DIR, selected_bk)
-                    with open(bk_full_path, "rb") as bf:
-                        st.download_button(f"📥 Download {selected_bk}", data=bf.read(), file_name=selected_bk, mime="application/octet-stream")
-
-    st.markdown("---")
-    st.subheader("📊 System Database Overview & Export All Tables")
-    conn = get_db_connection()
-    tables_list = [t['name'] for t in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
-    conn.close()
-
-    selected_overview_table = st.selectbox("Select Table to Inspect", tables_list)
-    if selected_overview_table:
-        conn = get_db_connection()
-        ov_df = pd.read_sql_query(f"SELECT * FROM {selected_overview_table}", conn)
-        conn.close()
-        st.write(f"Showing table: **{selected_overview_table}** ({len(ov_df)} rows)")
-        st.dataframe(ov_df, use_container_width=True)
+        st.error("Access Denied. Administrator privileges required to access System Administration.")
+    else:
+        tab_backup, tab_import, tab_master = st.tabs(["💾 Backup & Recovery", "📥 Excel Template & Smart Import", "⚙️ Master Tables Editor"])
         
-        st.download_button(
-            f"📥 Export Table '{selected_overview_table}' to Excel",
-            data=export_df_to_excel(ov_df, sheet_name=selected_overview_table),
-            file_name=f"{selected_overview_table}_{datetime.today().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # ==============================================================================
-    # ➕ UPDATE / ADDED SECTION: UNIVERSAL TABLE CRUD (CREATE, UPDATE, DELETE)
-    # ==============================================================================
-    st.markdown("---")
-    st.subheader("🛠️ Universal Database Record Management (Create, Update, Delete)")
-    st.markdown("Select any database table below to perform direct **Create (Insert)**, **Update (Edit)**, or **Delete** operations.")
-
-    crud_table = st.selectbox("Select Table for CRUD Operations", tables_list, key="crud_table_select")
-
-    if crud_table:
-        conn = get_db_connection()
-        # Fetch table columns and primary key info
-        table_info = conn.execute(f"PRAGMA table_info({crud_table})").fetchall()
-        columns_data = [(col['name'], col['type'], col['notnull'], col['pk']) for col in table_info]
-        crud_df = pd.read_sql_query(f"SELECT * FROM {crud_table}", conn)
-        conn.close()
-
-        col_crud1, col_crud2, col_crud3 = st.columns(3)
-
-        # 1. CREATE (INSERT) OPERATION
-        with col_crud1:
-            st.markdown(f"#### ➕ Insert into `{crud_table}`")
-            with st.form(f"insert_form_{crud_table}"):
-                insert_vals = {}
-                for col_name, col_type, notnull, pk in columns_data:
-                    # Auto-increment primary keys are skipped during insert
-                    if pk == 1 and ('INT' in col_type.upper()):
-                        continue
-                    
-                    if 'INT' in col_type.upper():
-                        insert_vals[col_name] = st.number_input(f"{col_name} ({col_type})", value=0, step=1, key=f"ins_{crud_table}_{col_name}")
-                    elif 'REAL' in col_type.upper() or 'FLO' in col_type.upper():
-                        insert_vals[col_name] = st.number_input(f"{col_name} ({col_type})", value=0.0, key=f"ins_{crud_table}_{col_name}")
-                    else:
-                        insert_vals[col_name] = st.text_input(f"{col_name} ({col_type})", key=f"ins_{crud_table}_{col_name}")
+        with tab_backup:
+            st.subheader("Database Backup & Export")
+            st.markdown("Create a manual timestamped backup of the entire SQLite database and export all tables to Excel.")
+            if st.button("Perform Manual Backup Now", type="primary"):
+                success, db_path, excel_path = perform_manual_backup()
+                if success:
+                    set_transaction_dialog("Backup Successful", f"Database backup saved to: {db_path}\nExcel export saved to: {excel_path}", "success")
+                else:
+                    set_transaction_dialog("Backup Failed", f"Error: {db_path}", "error")
+                st.rerun()
                 
-                submitted_insert = st.form_submit_button("Insert Record")
-                if submitted_insert:
-                    try:
-                        conn = get_db_connection()
-                        keys = list(insert_vals.keys())
-                        placeholders = ", ".join(["?"] * len(keys))
-                        cols_str = ", ".join(keys)
-                        vals = [insert_vals[k] for k in keys]
-                        
-                        conn.execute(f"INSERT INTO {crud_table} ({cols_str}) VALUES ({placeholders})", vals)
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Insert Successful", f"New record successfully added to `{crud_table}`.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Insert Failed", f"Error: {str(e)}", "error")
-                    st.rerun()
+            st.markdown("##### Existing Backup Files:")
+            if os.path.exists(BACKUP_DIR):
+                backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True)
+                if backup_files:
+                    for b_file in backup_files[:10]:
+                        f_path = os.path.join(BACKUP_DIR, b_file)
+                        with open(f_path, "rb") as bf:
+                            b_data = bf.read()
+                        st.download_button(f"📥 Download {b_file}", data=b_data, file_name=b_file, key=f"dl_backup_{b_file}")
+                else:
+                    st.info("No backup files found.")
 
-        # 2. UPDATE (EDIT) OPERATION
-        with col_crud2:
-            st.markdown(f"#### ✏️ Update `{crud_table}`")
-            if not crud_df.empty:
-                # Find primary key or unique identifier column
-                pk_cols = [col[0] for col in columns_data if col[3] > 0]
-                identifier_col = pk_cols[0] if pk_cols else columns_data[0][0]
-                
-                record_ids = crud_df[identifier_col].tolist()
-                selected_record_id = st.selectbox(f"Select Record by `{identifier_col}`", options=record_ids, key=f"upd_sel_{crud_table}")
-                
-                selected_row = crud_df[crud_df[identifier_col] == selected_record_id].iloc[0]
-                
-                with st.form(f"update_form_{crud_table}"):
-                    update_vals = {}
-                    for col_name, col_type, notnull, pk in columns_data:
-                        current_val = selected_row[col_name]
-                        if pd.isna(current_val):
-                            current_val = ""
-                            
-                        if col_name == identifier_col:
-                            # Primary key is read-only for updates
-                            st.text(f"{col_name}: {current_val} (Identifier)")
-                            update_vals[col_name] = current_val
-                        elif 'INT' in col_type.upper():
-                            update_vals[col_name] = st.number_input(f"{col_name}", value=int(current_val) if str(current_val).isdigit() else 0, step=1, key=f"upd_{crud_table}_{col_name}")
-                        elif 'REAL' in col_type.upper() or 'FLO' in col_type.upper():
-                            update_vals[col_name] = st.number_input(f"{col_name}", value=float(current_val) if str(current_val).replace('.','',1).isdigit() else 0.0, key=f"upd_{crud_table}_{col_name}")
-                        else:
-                            update_vals[col_name] = st.text_input(f"{col_name}", value=str(current_val), key=f"upd_{crud_table}_{col_name}")
-                    
-                    submitted_update = st.form_submit_button("Save Updates")
-                    if submitted_update:
-                        try:
-                            conn = get_db_connection()
-                            set_clauses = []
-                            vals = []
-                            for k, v in update_vals.items():
-                                if k != identifier_col:
-                                    set_clauses.append(f"{k} = ?")
-                                    vals.append(v)
-                            vals.append(selected_record_id)
-                            
-                            set_str = ", ".join(set_clauses)
-                            query = f"UPDATE {crud_table} SET {set_str} WHERE {identifier_col} = ?"
-                            conn.execute(query, vals)
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Update Successful", f"Record `{selected_record_id}` in `{crud_table}` successfully updated.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Update Failed", f"Error: {str(e)}", "error")
-                        st.rerun()
-            else:
-                st.info("No records available in table to update.")
-
-        # 3. DELETE OPERATION
-        with col_crud3:
-            st.markdown(f"#### 🗑️ Delete from `{crud_table}`")
-            if not crud_df.empty:
-                pk_cols = [col[0] for col in columns_data if col[3] > 0]
-                identifier_col = pk_cols[0] if pk_cols else columns_data[0][0]
-                record_ids_del = crud_df[identifier_col].tolist()
-                
-                selected_del_id = st.selectbox(f"Select Record to Delete by `{identifier_col}`", options=record_ids_del, key=f"del_sel_{crud_table}")
-                
-                if st.button(f"🗑️ Delete Record (`{selected_del_id}`)", type="primary", key=f"btn_del_exec_{crud_table}"):
-                    try:
-                        conn = get_db_connection()
-                        conn.execute(f"DELETE FROM {crud_table} WHERE {identifier_col} = ?", (selected_del_id,))
-                        conn.commit()
-                        conn.close()
-                        set_transaction_dialog("Deletion Successful", f"Record `{selected_del_id}` successfully deleted from `{crud_table}`.", "success")
-                    except Exception as e:
-                        set_transaction_dialog("Deletion Failed", f"Error: {str(e)}", "error")
-                    st.rerun()
-            else:
-                st.info("No records available in table to delete.")
-
-st.set_page_config(
-    page_title="Data Management & Smart Import", layout="wide"
-)
-
-# Initialize Session State mock database tables and unique keys
-if "tables" not in st.session_state:
-  st.session_state.tables = {
-      "Subcontractors": {
-          "key": "Subcontractor_ID",
-          "data": pd.DataFrame({
-              "Subcontractor_ID": ["SUB-01", "SUB-02", "SUB-03"],
-              "Name": ["WASCO", "MEINDO", "KKS"],
-              "Status": ["Active", "Active", "Pending"],
-          }),
-      },
-      "Joint_Change_Requests": {
-          "key": "JCRF_ID",
-          "data": pd.DataFrame({
-              "JCRF_ID": ["JCRF-101", "JCRF-102"],
-              "Pipe_Number": ["PN-501", "PN-502"],
-              "Subcontractor_ID": ["SUB-01", "SUB-02"],
-              "Status": ["Approved", "Under Review"],
-          }),
-      },
-  }
-
-
-def generate_excel_template(df, unique_key):
-  """Generates an Excel template matching the dataframe columns and data types."""
-  output = io.BytesIO()
-  with pd.ExcelWriter(output, engine="openpyxl") as writer:
-    # Export empty dataframe or header-only structure as a clean template
-    df.head(0).to_excel(writer, index=False, sheet_name="Template")
-  output.seek(0)
-  return output
-
-
-def smart_upsert(existing_df, imported_df, unique_key):
-  """Appends new records and updates existing ones based on the unique key."""
-  # Ensure columns align
-  imported_df = imported_df[existing_df.columns]
-
-  # Set unique key as index for clean merge/update handling
-  existing_indexed = existing_df.set_index(unique_key)
-  imported_indexed = imported_df.set_index(unique_key)
-
-  # Update existing and append new rows
-  existing_indexed.update(imported_indexed)
-  new_rows = imported_indexed[~imported_indexed.index.isin(existing_indexed.index)]
-
-  combined_df = pd.concat([existing_indexed, new_rows]).reset_index()
-  return combined_df
-
-
-# --- UI Layout ---
-st.title("Database Management & Smart Excel Import")
-
-table_name = st.sidebar.selectbox(
-    "Select Table", list(st.session_state.tables.keys())
-)
-current_table = st.session_state.tables[table_name]
-df = current_table["data"]
-unique_key = current_table["key"]
-
-st.header(f"Table: {table_name}")
-st.write(f"**Unique Key:** `{unique_key}`")
-
-# --- Tabs for Operations ---
-tab_view, tab_import, tab_cud = st.tabs(
-    ["View & Manage", "Smart Excel Import", "Create / Update / Delete"]
-)
-
-with tab_view:
-  st.subheader("Current Records")
-  st.dataframe(df, use_container_width=True)
-
-with tab_import:
-  st.subheader("Excel Import & Template Download")
-  st.markdown(
-      "Download the exact template matching this table's structure. Uploading"
-      " completed files will **automatically append** new records and"
-      " **update** existing ones based on the unique key."
-  )
-
-  # Template Download
-  template_file = generate_excel_template(df, unique_key)
-  st.download_button(
-      label=f"📥 Download {table_name} Excel Template",
-      data=template_file,
-      file_name=f"{table_name}_template.xlsx",
-      mime=(
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      ),
-  )
-
-  st.divider()
-
-  # File Upload & Smart Upsert
-  uploaded_file = st.file_uploader(
-      f"Upload filled {table_name} Excel file", type=["xlsx", "xls"]
-  )
-  if uploaded_file is not None:
-    try:
-      imported_df = pd.read_excel(uploaded_file)
-
-      # Validate unique key presence
-      if unique_key not in imported_df.columns:
-        st.error(
-            f"Error: Uploaded file is missing required unique key column"
-            f" '{unique_key}'."
-        )
-      else:
-        st.write("Preview of Imported Data:")
-        st.dataframe(imported_df, use_container_width=True)
-
-        if st.button("Confirm and Process Import (Upsert)"):
-          updated_df = smart_upsert(df, imported_df, unique_key)
-          st.session_state.tables[table_name]["data"] = updated_df
-          st.success(
-              f"Successfully imported and synced records for {table_name}!"
-          )
-          st.rerun()
-    except Exception as e:
-      st.error(f"Error processing file: {e}")
-
-with tab_cud:
-  st.subheader("Manual Record Operations (Create, Update, Delete)")
-
-  op_mode = st.radio(
-      "Operation", ["Create New Record", "Update Record", "Delete Record"]
-  )
-
-  if op_mode == "Create New Record":
-    with st.form("create_form"):
-      new_row_data = {}
-      for col in df.columns:
-        new_row_data[col] = st.text_input(f"Enter value for {col}")
-
-      submitted = st.form_submit_button("Create Record")
-      if submitted:
-        new_df = pd.DataFrame([new_row_data])
-        if new_row_data[unique_key] in df[unique_key].values:
-          st.error(
-              f"Error: Key '{new_row_data[unique_key]}' already exists. Use"
-              " Update instead."
-          )
-        else:
-          st.session_state.tables[table_name]["data"] = pd.concat(
-              [df, new_df], ignore_index=True
-          )
-          st.success("Record created successfully!")
-          st.rerun()
-
-  elif op_mode == "Update Record":
-    if df.empty:
-      st.warning("No records available to update.")
-    else:
-      selected_key_val = st.selectbox(
-          f"Select {unique_key} to Update", df[unique_key].tolist()
-      )
-      record_idx = df[df[unique_key] == selected_key_val].index[0]
-      current_record = df.loc[record_idx]
-
-      with st.form("update_form"):
-        updated_values = {}
-        for col in df.columns:
-          if col == unique_key:
-            st.text(f"{col}: {current_record[col]} (ID cannot be changed)")
-            updated_values[col] = current_record[col]
-          else:
-            updated_values[col] = st.text_input(
-                f"Update {col}", value=str(current_record[col])
+        with tab_import:
+            st.subheader("📥 Excel Template Download & Smart Data Import")
+            st.markdown(
+                """
+                Download the master Excel template containing all database tables as sheets. 
+                Fill or update your data in the respective sheets, and upload it back. 
+                The importer is smart: it matches columns and **automatically appends new rows or updates existing records** based on each table's unique key!
+                """
             )
+            
+            # 1. GENERATE & DOWNLOAD TEMPLATE
+            conn = get_db_connection()
+            table_names = [
+                "users", "holidays", "trips", "overtime_requests", "meeting_rooms", 
+                "room_bookings", "cars", "fleet_drivers", "transit_groups", 
+                "transit_passengers", "daily_transit", "site_news"
+            ]
+            
+            template_buffer = io.BytesIO()
+            with pd.ExcelWriter(template_buffer, engine='openpyxl') as writer:
+                for tname in table_names:
+                    try:
+                        df_tbl = pd.read_sql_query(f"SELECT * FROM {tname} LIMIT 0", conn)
+                    except Exception:
+                        df_tbl = pd.DataFrame()
+                    df_tbl.to_excel(writer, index=False, sheet_name=tname)
+            conn.close()
+            
+            st.download_button(
+                "📥 Download Master Excel Import Template (.xlsx)",
+                data=template_buffer.getvalue(),
+                file_name=f"Master_Operations_Import_Template_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+            st.markdown("---")
+            st.subheader("Upload & Process Master Excel Import")
+            uploaded_import_file = st.file_uploader("Upload Completed Excel Master Template", type=["xlsx", "xls"])
+            
+            if uploaded_import_file is not None:
+                if st.button("🚀 Process Smart Import & Update Database", type="primary"):
+                    try:
+                        excel_file_obj = pd.ExcelFile(uploaded_import_file)
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        
+                        import_summary_log = []
+                        
+                        # Define primary key mapping for smart upsert per table
+                        pk_mapping = {
+                            "users": "username",
+                            "holidays": "holiday_date",
+                            "trips": "trip",
+                            "overtime_requests": "id",
+                            "meeting_rooms": "room_number",
+                            "room_bookings": "id",
+                            "cars": "car_name",
+                            "fleet_drivers": "driver_name",
+                            "transit_groups": "group_name",
+                            "transit_passengers": "id",
+                            "daily_transit": "id",
+                            "site_news": "id"
+                        }
+                        
+                        for sheet_name in excel_file_obj.sheet_names:
+                            if sheet_name in table_names:
+                                df_sheet = pd.read_excel(excel_file_obj, sheet_name=sheet_name)
+                                if df_sheet.empty:
+                                    continue
+                                    
+                                pk_col = pk_mapping.get(sheet_name)
+                                
+                                updated_count = 0
+                                inserted_count = 0
+                                
+                                for _, row in df_sheet.iterrows():
+                                    # Drop columns with NA / NaN values to prevent SQL errors
+                                    clean_row = row.dropna()
+                                    if clean_row.empty:
+                                        continue
+                                        
+                                    cols = list(clean_row.index)
+                                    vals = list(clean_row.values)
+                                    
+                                    # Check if unique primary key exists in row and table
+                                    exists = False
+                                    if pk_col and pk_col in cols and sheet_name not in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
+                                        pk_val = clean_row[pk_col]
+                                        cursor.execute(f"SELECT COUNT(*) FROM {sheet_name} WHERE {pk_col} = ?", (pk_val,))
+                                        if cursor.fetchone()[0] > 0:
+                                            exists = True
+                                            
+                                    if exists and pk_col:
+                                        # UPDATE existing record
+                                        set_clause = ", ".join([f"{c} = ?" for c in cols if c != pk_col])
+                                        update_vals = [clean_row[c] for c in cols if c != pk_col] + [clean_row[pk_col]]
+                                        if set_clause:
+                                            sql = f"UPDATE {sheet_name} SET {set_clause} WHERE {pk_col} = ?"
+                                            cursor.execute(sql, update_vals)
+                                            updated_count += 1
+                                    else:
+                                        # INSERT new record (handle auto-increment primary keys by omitting PK if null/NaN)
+                                        insert_cols = cols
+                                        insert_vals = vals
+                                        if pk_col in cols and sheet_name in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
+                                            if pd.isna(clean_row[pk_col]) or str(clean_row[pk_col]).strip() == "":
+                                                insert_cols = [c for c in cols if c != pk_col]
+                                                insert_vals = [clean_row[c] for c in insert_cols]
+                                                
+                                        placeholders = ", ".join(["?"] * len(insert_cols))
+                                        col_names_str = ", ".join(insert_cols)
+                                        sql = f"INSERT OR REPLACE INTO {sheet_name} ({col_names_str}) VALUES ({placeholders})"
+                                        cursor.execute(sql, insert_vals)
+                                        inserted_count += 1
+                                        
+                                import_summary_log.append(f"Table **{sheet_name}**: Inserted {inserted_count}, Updated {updated_count}")
+                                
+                        conn.commit()
+                        conn.close()
+                        
+                        summary_msg = "\n".join(import_summary_log)
+                        set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n{summary_msg}", "success")
+                    except Exception as e:
+                        set_transaction_dialog("Import Failed", f"Error during import processing: {str(e)}", "error")
+                    st.rerun()
 
-        update_submitted = st.form_submit_button("Save Changes")
-        if update_submitted:
-          for col, val in updated_values.items():
-            st.session_state.tables[table_name]["data"].at[record_idx, col] = val
-          st.success("Record updated successfully!")
-          st.rerun()
-
-  elif op_mode == "Delete Record":
-    if df.empty:
-      st.warning("No records available to delete.")
-    else:
-      delete_key_val = st.selectbox(
-          f"Select {unique_key} to Delete", df[unique_key].tolist()
-      )
-      if st.button("Delete Record", type="primary"):
-        st.session_state.tables[table_name]["data"] = df[
-            df[unique_key] != delete_key_val
-        ].reset_index(drop=True)
-        st.success(f"Record {delete_key_val} deleted successfully!")
-        st.rerun()
+        with tab_master:
+            st.subheader("Master Tables Data View & Quick Management")
+            selected_master_table = st.selectbox(
+                "Select Master Table to Inspect",
+                ["users", "cars", "fleet_drivers", "transit_groups", "transit_passengers", "meeting_rooms", "holidays", "trips"]
+            )
+            
+            conn = get_db_connection()
+            master_df = pd.read_sql_query(f"SELECT * FROM {selected_master_table}", conn)
+            conn.close()
+            
+            st.dataframe(master_df, use_container_width=True)
+            st.download_button(
+                f"📥 Export {selected_master_table} to Excel (.xlsx)",
+                data=export_df_to_excel(master_df, sheet_name=selected_master_table),
+                file_name=f"{selected_master_table}_{datetime.today().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
