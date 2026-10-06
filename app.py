@@ -36,7 +36,8 @@ NEWS_DIR = "site_news_uploads"
 
 # Ensure directories exist
 if not os.path.exists(BACKUP_DIR):
-    os.makedirs(BACKUP_DIR)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    os.makedirs(NEWS_DIR, exist_ok=True)
 if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
