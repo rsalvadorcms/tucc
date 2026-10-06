@@ -1892,3 +1892,198 @@ elif nav_selection == "🛠️ System Administration":
                     st.rerun()
             else:
                 st.info("No records available in table to delete.")
+
+st.set_page_config(
+    page_title="Data Management & Smart Import", layout="wide"
+)
+
+# Initialize Session State mock database tables and unique keys
+if "tables" not in st.session_state:
+  st.session_state.tables = {
+      "Subcontractors": {
+          "key": "Subcontractor_ID",
+          "data": pd.DataFrame({
+              "Subcontractor_ID": ["SUB-01", "SUB-02", "SUB-03"],
+              "Name": ["WASCO", "MEINDO", "KKS"],
+              "Status": ["Active", "Active", "Pending"],
+          }),
+      },
+      "Joint_Change_Requests": {
+          "key": "JCRF_ID",
+          "data": pd.DataFrame({
+              "JCRF_ID": ["JCRF-101", "JCRF-102"],
+              "Pipe_Number": ["PN-501", "PN-502"],
+              "Subcontractor_ID": ["SUB-01", "SUB-02"],
+              "Status": ["Approved", "Under Review"],
+          }),
+      },
+  }
+
+
+def generate_excel_template(df, unique_key):
+  """Generates an Excel template matching the dataframe columns and data types."""
+  output = io.BytesIO()
+  with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    # Export empty dataframe or header-only structure as a clean template
+    df.head(0).to_excel(writer, index=False, sheet_name="Template")
+  output.seek(0)
+  return output
+
+
+def smart_upsert(existing_df, imported_df, unique_key):
+  """Appends new records and updates existing ones based on the unique key."""
+  # Ensure columns align
+  imported_df = imported_df[existing_df.columns]
+
+  # Set unique key as index for clean merge/update handling
+  existing_indexed = existing_df.set_index(unique_key)
+  imported_indexed = imported_df.set_index(unique_key)
+
+  # Update existing and append new rows
+  existing_indexed.update(imported_indexed)
+  new_rows = imported_indexed[~imported_indexed.index.isin(existing_indexed.index)]
+
+  combined_df = pd.concat([existing_indexed, new_rows]).reset_index()
+  return combined_df
+
+
+# --- UI Layout ---
+st.title("Database Management & Smart Excel Import")
+
+table_name = st.sidebar.selectbox(
+    "Select Table", list(st.session_state.tables.keys())
+)
+current_table = st.session_state.tables[table_name]
+df = current_table["data"]
+unique_key = current_table["key"]
+
+st.header(f"Table: {table_name}")
+st.write(f"**Unique Key:** `{unique_key}`")
+
+# --- Tabs for Operations ---
+tab_view, tab_import, tab_cud = st.tabs(
+    ["View & Manage", "Smart Excel Import", "Create / Update / Delete"]
+)
+
+with tab_view:
+  st.subheader("Current Records")
+  st.dataframe(df, use_container_width=True)
+
+with tab_import:
+  st.subheader("Excel Import & Template Download")
+  st.markdown(
+      "Download the exact template matching this table's structure. Uploading"
+      " completed files will **automatically append** new records and"
+      " **update** existing ones based on the unique key."
+  )
+
+  # Template Download
+  template_file = generate_excel_template(df, unique_key)
+  st.download_button(
+      label=f"📥 Download {table_name} Excel Template",
+      data=template_file,
+      file_name=f"{table_name}_template.xlsx",
+      mime=(
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ),
+  )
+
+  st.divider()
+
+  # File Upload & Smart Upsert
+  uploaded_file = st.file_uploader(
+      f"Upload filled {table_name} Excel file", type=["xlsx", "xls"]
+  )
+  if uploaded_file is not None:
+    try:
+      imported_df = pd.read_excel(uploaded_file)
+
+      # Validate unique key presence
+      if unique_key not in imported_df.columns:
+        st.error(
+            f"Error: Uploaded file is missing required unique key column"
+            f" '{unique_key}'."
+        )
+      else:
+        st.write("Preview of Imported Data:")
+        st.dataframe(imported_df, use_container_width=True)
+
+        if st.button("Confirm and Process Import (Upsert)"):
+          updated_df = smart_upsert(df, imported_df, unique_key)
+          st.session_state.tables[table_name]["data"] = updated_df
+          st.success(
+              f"Successfully imported and synced records for {table_name}!"
+          )
+          st.rerun()
+    except Exception as e:
+      st.error(f"Error processing file: {e}")
+
+with tab_cud:
+  st.subheader("Manual Record Operations (Create, Update, Delete)")
+
+  op_mode = st.radio(
+      "Operation", ["Create New Record", "Update Record", "Delete Record"]
+  )
+
+  if op_mode == "Create New Record":
+    with st.form("create_form"):
+      new_row_data = {}
+      for col in df.columns:
+        new_row_data[col] = st.text_input(f"Enter value for {col}")
+
+      submitted = st.form_submit_button("Create Record")
+      if submitted:
+        new_df = pd.DataFrame([new_row_data])
+        if new_row_data[unique_key] in df[unique_key].values:
+          st.error(
+              f"Error: Key '{new_row_data[unique_key]}' already exists. Use"
+              " Update instead."
+          )
+        else:
+          st.session_state.tables[table_name]["data"] = pd.concat(
+              [df, new_df], ignore_index=True
+          )
+          st.success("Record created successfully!")
+          st.rerun()
+
+  elif op_mode == "Update Record":
+    if df.empty:
+      st.warning("No records available to update.")
+    else:
+      selected_key_val = st.selectbox(
+          f"Select {unique_key} to Update", df[unique_key].tolist()
+      )
+      record_idx = df[df[unique_key] == selected_key_val].index[0]
+      current_record = df.loc[record_idx]
+
+      with st.form("update_form"):
+        updated_values = {}
+        for col in df.columns:
+          if col == unique_key:
+            st.text(f"{col}: {current_record[col]} (ID cannot be changed)")
+            updated_values[col] = current_record[col]
+          else:
+            updated_values[col] = st.text_input(
+                f"Update {col}", value=str(current_record[col])
+            )
+
+        update_submitted = st.form_submit_button("Save Changes")
+        if update_submitted:
+          for col, val in updated_values.items():
+            st.session_state.tables[table_name]["data"].at[record_idx, col] = val
+          st.success("Record updated successfully!")
+          st.rerun()
+
+  elif op_mode == "Delete Record":
+    if df.empty:
+      st.warning("No records available to delete.")
+    else:
+      delete_key_val = st.selectbox(
+          f"Select {unique_key} to Delete", df[unique_key].tolist()
+      )
+      if st.button("Delete Record", type="primary"):
+        st.session_state.tables[table_name]["data"] = df[
+            df[unique_key] != delete_key_val
+        ].reset_index(drop=True)
+        st.success(f"Record {delete_key_val} deleted successfully!")
+        st.rerun()
