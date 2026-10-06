@@ -39,7 +39,7 @@ if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
 # ==============================================================================
-# ⚙️ 1. HELPER FUNCTIONS & DATABASE ENGINE
+# ⚙️️ 1. HELPER FUNCTIONS & DATABASE ENGINE
 # ==============================================================================
 DB_FILE = "office_operations.db"
 
@@ -1597,7 +1597,7 @@ elif nav_selection == "🛠️ System Administration":
     if st.session_state.role not in ["Admin", "Owner"]:
         st.error("Access Denied. Administrator privileges required to access System Administration.")
     else:
-        tab_backup, tab_import, tab_master = st.tabs(["💾 Backup & Recovery", "📥 Excel Template & Smart Import", "⚙️️ Master Tables Editor"])
+        tab_backup, tab_import, tab_master = st.tabs(["💾 Backup & Recovery", "📥 Excel Template & Smart Import", "⚙ Master Tables Editor"])
         
         with tab_backup:
             st.subheader("Database Backup & Export")
@@ -1764,109 +1764,74 @@ elif nav_selection == "🛠️ System Administration":
             )
             
             st.markdown("---")
-            st.subheader(f"Manage Records: `{selected_master_table}`")
-            
-            action_tab_c, action_tab_u, action_tab_d = st.tabs(["➕ Create (Add)", "✏️ Update (Edit)", "🗑️ Delete"])
-            
+            st.subheader(f"Manage Records (Grid Editor): `{selected_master_table}`")
+            st.markdown("Edit cells directly, add new rows at the bottom, or select rows to delete. Click **Save Changes to Database** when done.")
+
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(f"PRAGMA table_info({selected_master_table})")
             table_info = cursor.fetchall()
+            pk_cols = [col[1] for col in table_info if col[5] > 0]
+            if not pk_cols:
+                pk_cols = [master_df.columns[0] if not master_df.empty else '']
+            pk_col = pk_cols[0] if pk_cols else None
             conn.close()
-            
-            columns_info = [(col[1], col[2], col[5]) for col in table_info]
-            
-            with action_tab_c:
-                st.markdown(f"**Add New Record to `{selected_master_table}`**")
-                with st.form(f"create_form_{selected_master_table}"):
-                    form_inputs = {}
-                    for col_name, col_type, is_pk in columns_info:
-                        if is_pk and selected_master_table in ["transit_groups", "transit_passengers"] and col_name == "id":
-                            st.text(f"{col_name}: (Auto-generated ID)")
-                            continue
-                        form_inputs[col_name] = st.text_input(f"{col_name} ({col_type})", key=f"create_{selected_master_table}_{col_name}")
+
+            edited_df = st.data_editor(
+                master_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"grid_editor_{selected_master_table}"
+            )
+
+            if st.button("💾 Save Changes to Database", type="primary", key=f"save_grid_{selected_master_table}"):
+                try:
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
                     
-                    submitted_create = st.form_submit_button("Insert Record")
-                    if submitted_create:
-                        try:
-                            valid_inputs = {k: v for k, v in form_inputs.items() if v != ""}
-                            cols = list(valid_inputs.keys())
-                            vals = list(valid_inputs.values())
+                    if pk_col and pk_col in edited_df.columns and pk_col in master_df.columns:
+                        original_keys = set(master_df[pk_col].astype(str))
+                        current_keys = set(edited_df[pk_col].dropna().astype(str))
+                        
+                        deleted_keys = original_keys - current_keys
+                        for d_key in deleted_keys:
+                            cursor.execute(f"DELETE FROM {selected_master_table} WHERE CAST({pk_col} AS TEXT) = ?", (d_key,))
                             
-                            conn = get_db_connection()
+                        for _, row in edited_df.iterrows():
+                            clean_row = row.dropna()
+                            if clean_row.empty:
+                                continue
+                            cols = list(clean_row.index)
+                            p_val = str(row[pk_col]) if pk_col in row and pd.notna(row[pk_col]) else ""
+                            
+                            if p_val and p_val in original_keys:
+                                set_cols = [c for c in cols if c != pk_col]
+                                set_clause = ", ".join([f"{c} = ?" for c in set_cols])
+                                update_vals = [row[c] for c in set_cols] + [row[pk_col]]
+                                if set_clause:
+                                    cursor.execute(f"UPDATE {selected_master_table} SET {set_clause} WHERE {pk_col} = ?", update_vals)
+                            else:
+                                insert_cols = [c for c in cols if not (pk_col and c == pk_col and (pd.isna(row[c]) or str(row[c]).strip() == ""))]
+                                insert_vals = [row[c] for c in insert_cols]
+                                placeholders = ", ".join(["?"] * len(insert_cols))
+                                col_names_str = ", ".join(insert_cols)
+                                if insert_cols:
+                                    cursor.execute(f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})", insert_vals)
+                    else:
+                        cursor.execute(f"DELETE FROM {selected_master_table}")
+                        for _, row in edited_df.iterrows():
+                            clean_row = row.dropna()
+                            if clean_row.empty:
+                                continue
+                            cols = list(clean_row.index)
+                            vals = list(clean_row.values)
                             placeholders = ", ".join(["?"] * len(cols))
-                            col_str = ", ".join(cols)
-                            sql = f"INSERT INTO {selected_master_table} ({col_str}) VALUES ({placeholders})"
-                            conn.execute(sql, vals)
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Creation Successful", f"New record added to {selected_master_table}.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Creation Failed", f"Error: {str(e)}", "error")
-                        st.rerun()
-            
-            with action_tab_u:
-                st.markdown(f"**Update Existing Record in `{selected_master_table}`**")
-                if not master_df.empty:
-                    pk_cols = [col[1] for col in table_info if col[5] > 0]
-                    if not pk_cols:
-                        pk_cols = [master_df.columns[0]]
-                    
-                    pk_col = pk_cols[0]
-                    record_keys = master_df[pk_col].astype(str).tolist()
-                    selected_key = st.selectbox(f"Select Record by {pk_col}", record_keys, key=f"update_sel_{selected_master_table}")
-                    
-                    if selected_key:
-                        row_data = master_df[master_df[pk_col].astype(str) == selected_key].iloc[0]
-                        with st.form(f"update_form_{selected_master_table}"):
-                            update_inputs = {}
-                            for col_name, col_type, is_pk in columns_info:
-                                default_val = str(row_data[col_name]) if col_name in row_data and pd.notna(row_data[col_name]) else ""
-                                if col_name == pk_col:
-                                    st.text(f"{col_name} (Primary Key): {default_val}")
-                                    update_inputs[col_name] = default_val
-                                else:
-                                    update_inputs[col_name] = st.text_input(f"{col_name} ({col_type})", value=default_val, key=f"update_{selected_master_table}_{col_name}")
+                            col_names_str = ", ".join(cols)
+                            cursor.execute(f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})", vals)
                             
-                            submitted_update = st.form_submit_button("Save Changes")
-                            if submitted_update:
-                                try:
-                                    set_cols = [c for c in update_inputs.keys() if c != pk_col]
-                                    set_clause = ", ".join([f"{c} = ?" for c in set_cols])
-                                    vals = [update_inputs[c] for c in set_cols] + [selected_key]
-                                    
-                                    conn = get_db_connection()
-                                    sql = f"UPDATE {selected_master_table} SET {set_clause} WHERE {pk_col} = ?"
-                                    conn.execute(sql, vals)
-                                    conn.commit()
-                                    conn.close()
-                                    set_transaction_dialog("Update Successful", f"Record {selected_key} updated in {selected_master_table}.", "success")
-                                except Exception as e:
-                                    set_transaction_dialog("Update Failed", f"Error: {str(e)}", "error")
-                                st.rerun()
-                else:
-                    st.info("No records available to update.")
-            
-            with action_tab_d:
-                st.markdown(f"**Delete Record from `{selected_master_table}`**")
-                if not master_df.empty:
-                    pk_cols = [col[1] for col in table_info if col[5] > 0]
-                    if not pk_cols:
-                        pk_cols = [master_df.columns[0]]
-                    pk_col = pk_cols[0]
-                    
-                    record_keys_del = master_df[pk_col].astype(str).tolist()
-                    selected_key_del = st.selectbox(f"Select Record to Delete by {pk_col}", record_keys_del, key=f"delete_sel_{selected_master_table}")
-                    
-                    if st.button("Delete Selected Record", type="primary", key=f"btn_del_master_{selected_master_table}"):
-                        try:
-                            conn = get_db_connection()
-                            conn.execute(f"DELETE FROM {selected_master_table} WHERE {pk_col} = ?", (selected_key_del,))
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Deletion Successful", f"Record {selected_key_del} deleted from {selected_master_table}.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Deletion Failed", f"Error: {str(e)}", "error")
-                        st.rerun()
-                else:
-                    st.info("No records available to delete.")
+                    conn.commit()
+                    conn.close()
+                    set_transaction_dialog("Save Successful", f"Master table `{selected_master_table}` updated successfully.", "success")
+                except Exception as e:
+                    set_transaction_dialog("Save Failed", f"Error: {str(e)}", "error")
+                st.rerun()
