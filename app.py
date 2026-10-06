@@ -1437,7 +1437,7 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
         st.dataframe(transit_df, use_container_width=True)
         
         if st.session_state.role in ["Admin", "Owner"]:
-            with st.expander("✏️ Manage / Remove Transit Dispatches"):
+            with st.expander("✏️️ Manage / Remove Transit Dispatches"):
                 conn = get_db_connection()
                 t_raw = pd.read_sql_query("SELECT id, transit_date_start, group_name, trip FROM daily_transit ORDER BY id DESC", conn)
                 conn.close()
@@ -1509,13 +1509,13 @@ elif nav_selection == "🏢 Meeting Rooms":
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Room Bookings"):
                 conn = get_db_connection()
-                b_raw = pd.read_sql_query("SELECT id, room_number, booking_date FROM room_bookings", conn)
+                b_raw = pd.read_sql_query("SELECT id, room_number, booking_date, booked_by FROM room_bookings ORDER BY id DESC", conn)
                 conn.close()
                 for _, b_row in b_raw.iterrows():
-                    b_id, b_room, b_date = b_row['id'], b_row['room_number'], b_row['booking_date']
+                    b_id, b_room, b_date, b_by = b_row['id'], b_row['room_number'], b_row['booking_date'], b_row['booked_by']
                     bc1, bc2 = st.columns([4, 1])
                     with bc1:
-                        st.text(f"ID #{b_id} | Room: {b_room} | Date: {b_date}")
+                        st.text(f"Booking #{b_id} | Room: {b_room} | Date: {b_date} | By: {b_by}")
                     with bc2:
                         if st.button("🗑️ Remove", key=f"del_booking_{b_id}", type="primary"):
                             try:
@@ -1523,10 +1523,12 @@ elif nav_selection == "🏢 Meeting Rooms":
                                 conn.execute("DELETE FROM room_bookings WHERE id = ?", (b_id,))
                                 conn.commit()
                                 conn.close()
-                                set_transaction_dialog("Deletion Successful", f"Removed booking #{b_id}.", "success")
+                                set_transaction_dialog("Deletion Successful", f"Removed room booking #{b_id}.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                             st.rerun()
+
+        st.download_button("📥 Export Room Bookings to Excel (.xlsx)", data=export_df_to_excel(bookings_df, sheet_name="Room_Bookings"), file_name=f"Room_Bookings_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # 7. SITE NEWS
 elif nav_selection == "📢 Site News":
@@ -1535,49 +1537,58 @@ elif nav_selection == "📢 Site News":
     if st.session_state.role in ["Admin", "Owner"]:
         with st.form("upload_news_form"):
             news_title = st.text_input("Announcement Title")
-            uploaded_file = st.file_uploader("Upload Document / Notice (PDF, Excel, Images)", type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"])
+            uploaded_file = st.file_uploader("Upload Document / Image Attachment", type=["pdf", "png", "jpg", "jpeg", "xlsx", "docx"])
             submitted_news = st.form_submit_button("Publish Announcement")
             
             if submitted_news:
                 if not news_title or not uploaded_file:
-                    set_transaction_dialog("Publication Unsuccessful", "Title and file upload cannot be blank.", "error")
+                    set_transaction_dialog("Publication Unsuccessful", "Please provide both a title and an attachment file.", "error")
                 else:
                     try:
-                        file_path = os.path.join(NEWS_DIR, uploaded_file.name)
-                        with open(file_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+                        file_bytes = uploaded_file.read()
+                        filename = uploaded_file.name
+                        file_type = uploaded_file.type
+                        file_path = os.path.join(NEWS_DIR, filename)
                         
+                        with open(file_path, "wb") as f:
+                            f.write(file_bytes)
+                            
                         conn = get_db_connection()
                         conn.execute('''
                             INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
                             VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.today().strftime("%Y-%m-%d")))
+                        ''', (news_title, filename, file_path, file_type, st.session_state.username, datetime.now().strftime("%Y-%m-%d %H:%M")))
                         conn.commit()
                         conn.close()
-                        set_transaction_dialog("Publication Successful", "Site news published successfully.", "success")
+                        set_transaction_dialog("Publication Successful", f"Announcement '{news_title}' published.", "success")
                     except Exception as e:
                         set_transaction_dialog("Publication Unsuccessful", f"Failed: {str(e)}", "error")
                 st.rerun()
 
+    st.markdown("---")
+    st.subheader("📋 Active Announcements & Files")
     conn = get_db_connection()
-    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
+    news_df = pd.read_sql_query("SELECT id, title AS 'Title', filename AS 'File Name', uploaded_by AS 'Posted By', upload_date AS 'Date', file_path FROM site_news ORDER BY id DESC", conn)
     conn.close()
     
     if not news_df.empty:
         for _, n_row in news_df.iterrows():
-            n_id, n_title, n_fname, n_fpath, n_author, n_date = n_row['id'], n_row['title'], n_row['filename'], n_row['file_path'], n_row['uploaded_by'], n_row['upload_date']
+            n_id, n_title, n_fname, n_by, n_date, n_path = n_row['id'], n_row['Title'], n_row['File Name'], n_row['Posted By'], n_row['Date'], n_row['file_path']
+            
             with st.container():
-                st.subheader(n_title)
-                st.caption(f"Published by: {n_author} on {n_date}")
-                if os.path.exists(n_fpath):
-                    with open(n_fpath, "rb") as f:
-                        file_bytes = f.read()
-                    st.download_button(f"📥 Download {n_fname}", data=file_bytes, file_name=n_fname, key=f"dl_news_{n_id}")
+                st.markdown(f"#### 📌 {n_title}")
+                st.caption(f"Posted by **{n_by}** on {n_date} | File: `{n_fname}`")
+                
+                if os.path.exists(n_path):
+                    with open(n_path, "rb") as f:
+                        file_data = f.read()
+                    st.download_button(f"📥 Download Attachment: {n_fname}", data=file_data, file_name=n_fname, key=f"dl_news_{n_id}")
+                
                 if st.session_state.role in ["Admin", "Owner"]:
-                    if st.button("🗑️ Delete Announcement", key=f"del_news_{n_id}", type="secondary"):
+                    if st.button("🗑️ Delete Announcement", key=f"del_news_{n_id}", type="primary"):
                         try:
-                            if os.path.exists(n_fpath):
-                                os.remove(n_fpath)
+                            if os.path.exists(n_path):
+                                os.remove(n_path)
                             conn = get_db_connection()
                             conn.execute("DELETE FROM site_news WHERE id = ?", (n_id,))
                             conn.commit()
@@ -1595,278 +1606,106 @@ elif nav_selection == "🛠️ System Administration":
     st.header("🛠️ System Administration & Master Data Management")
     
     if st.session_state.role not in ["Admin", "Owner"]:
-        st.error("Access Denied. Administrator privileges required to access System Administration.")
+        st.error("Access Denied: Administrative or Owner privileges required.")
     else:
-        tab_backup, tab_import, tab_master = st.tabs(["💾 Backup & Recovery", "📥 Excel Template & Smart Import", "⚙️️ Master Tables Editor"])
+        admin_tab1, admin_tab2, admin_tab3 = st.tabs(["⚙️ Database Backup & Restore", "🗂️ Manage Records (Grid View)", "👥 User Management"])
         
-        with tab_backup:
-            st.subheader("Database Backup & Export")
-            st.markdown("Create a manual timestamped backup of the entire SQLite database and export all tables to Excel.")
-            if st.button("Perform Manual Backup Now", type="primary"):
-                success, db_path, excel_path = perform_manual_backup()
-                if success:
-                    set_transaction_dialog("Backup Successful", f"Database backup saved to: {db_path}\nExcel export saved to: {excel_path}", "success")
-                else:
-                    set_transaction_dialog("Backup Failed", f"Error: {db_path}", "error")
-                st.rerun()
-                
-            st.markdown("##### Existing Backup Files:")
-            if os.path.exists(BACKUP_DIR):
-                backup_files = sorted(os.listdir(BACKUP_DIR), reverse=True)
-                if backup_files:
-                    for b_file in backup_files[:10]:
-                        f_path = os.path.join(BACKUP_DIR, b_file)
-                        with open(f_path, "rb") as bf:
-                            b_data = bf.read()
-                        st.download_button(f"📥 Download {b_file}", data=b_data, file_name=b_file, key=f"dl_backup_{b_file}")
-                else:
-                    st.info("No backup files found.")
+        with admin_tab1:
+            st.subheader("Database Backup & Recovery Center")
+            st.write("Perform manual database backups, export all database tables to Excel spreadsheets, or restore from prior backup snapshots.")
+            
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                if st.button("💾 Run Manual System Backup Now", use_container_width=True):
+                    success, db_bk, ex_bk = perform_manual_backup()
+                    if success:
+                        set_transaction_dialog("Backup Successful", f"Database backed up to:\n`{db_bk}`\n\nExcel data export saved to:\n`{ex_bk}`", "success")
+                    else:
+                        set_transaction_dialog("Backup Failed", f"Error: {db_bk}", "error")
+                    st.rerun()
+                    
+            with col_b2:
+                if os.path.exists(BACKUP_DIR):
+                    backup_files = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith(".db")], reverse=True)
+                    if backup_files:
+                        selected_backup = st.selectbox("Select Prior Backup Snapshot to Restore", backup_files)
+                        if st.button("🔄 Restore Selected Backup", type="primary", use_container_width=True):
+                            try:
+                                src_path = os.path.join(BACKUP_DIR, selected_backup)
+                                shutil.copy2(src_path, DB_FILE)
+                                set_transaction_dialog("Restore Successful", f"Database successfully restored from `{selected_backup}`.", "success")
+                            except Exception as e:
+                                set_transaction_dialog("Restore Failed", f"Error: {str(e)}", "error")
+                            st.rerun()
+                    else:
+                        st.info("No prior backup files found.")
 
-        with tab_import:
-            st.subheader("📥 Excel Template Download & Smart Data Import")
-            st.markdown(
-                """
-                Download the master Excel template containing all database tables as sheets. 
-                Fill or update your data in the respective sheets, and upload it back. 
-                The importer is smart: it matches columns and **automatically appends new rows or updates existing records** based on each table's unique key!
-                """
-            )
-            
-            # 1. GENERATE & DOWNLOAD TEMPLATE
+        # ======================================================================
+        # MANAGE RECORDS PORTION (GRID VIEW WITH ADD/CREATE, UPDATE, AND DELETE)
+        # ======================================================================
+        with admin_tab2:
+            st.subheader("🗂️ Manage Records - Interactive Grid View")
+            st.markdown("Select a database table below to view, add new rows, edit existing records, or delete rows directly within the grid.")
+
             conn = get_db_connection()
-            table_names = [
-                "users", "holidays", "trips", "overtime_requests", "meeting_rooms", 
-                "room_bookings", "cars", "fleet_drivers", "transit_groups", 
-                "transit_passengers", "daily_transit", "site_news"
-            ]
-            
-            template_buffer = io.BytesIO()
-            with pd.ExcelWriter(template_buffer, engine='openpyxl') as writer:
-                for tname in table_names:
-                    try:
-                        df_tbl = pd.read_sql_query(f"SELECT * FROM {tname} LIMIT 0", conn)
-                    except Exception:
-                        df_tbl = pd.DataFrame()
-                    df_tbl.to_excel(writer, index=False, sheet_name=tname)
+            table_names = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()]
             conn.close()
-            
-            st.download_button(
-                "📥 Download Master Excel Import Template (.xlsx)",
-                data=template_buffer.getvalue(),
-                file_name=f"Master_Operations_Import_Template_{datetime.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            
-            st.markdown("---")
-            st.subheader("Upload & Process Master Excel Import")
-            uploaded_import_file = st.file_uploader("Upload Completed Excel Master Template", type=["xlsx", "xls"])
-            
-            if uploaded_import_file is not None:
-                if st.button("🚀 Process Smart Import & Update Database", type="primary"):
+
+            selected_table = st.selectbox("Select Database Table to Manage", options=table_names)
+
+            if selected_table:
+                conn = get_db_connection()
+                df_table = pd.read_sql_query(f"SELECT * FROM {selected_table}", conn)
+                conn.close()
+
+                st.markdown(f"**Table:** `{selected_table}` ({len(df_table)} records)")
+                
+                # Render editable data grid with full add, update, and delete support
+                edited_df = st.data_editor(
+                    df_table,
+                    num_rows="dynamic",
+                    key=f"grid_editor_{selected_table}",
+                    use_container_width=True
+                )
+
+                if st.button(f"💾 Save Changes to `{selected_table}`", type="primary"):
                     try:
-                        excel_file_obj = pd.ExcelFile(uploaded_import_file)
                         conn = get_db_connection()
-                        cursor = conn.cursor()
-                        
-                        import_summary_log = []
-                        
-                        pk_mapping = {
-                            "users": "username",
-                            "holidays": "holiday_date",
-                            "trips": "trip",
-                            "overtime_requests": "id",
-                            "meeting_rooms": "room_number",
-                            "room_bookings": "id",
-                            "cars": "car_name",
-                            "fleet_drivers": "driver_name",
-                            "transit_groups": "group_name",
-                            "transit_passengers": "id",
-                            "daily_transit": "id",
-                            "site_news": "id"
-                        }
-                        
-                        for sheet_name in excel_file_obj.sheet_names:
-                            if sheet_name in table_names:
-                                df_sheet = pd.read_excel(excel_file_obj, sheet_name=sheet_name)
-                                if df_sheet.empty:
-                                    continue
-                                    
-                                pk_col = pk_mapping.get(sheet_name)
-                                
-                                updated_count = 0
-                                inserted_count = 0
-                                
-                                for _, row in df_sheet.iterrows():
-                                    clean_row = row.dropna()
-                                    if clean_row.empty:
-                                        continue
-                                        
-                                    cols = list(clean_row.index)
-                                    vals = list(clean_row.values)
-                                    
-                                    exists = False
-                                    if pk_col and pk_col in cols and sheet_name not in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
-                                        pk_val = clean_row[pk_col]
-                                        cursor.execute(f"SELECT COUNT(*) FROM {sheet_name} WHERE {pk_col} = ?", (pk_val,))
-                                        if cursor.fetchone()[0] > 0:
-                                            exists = True
-                                            
-                                    if exists and pk_col:
-                                        set_clause = ", ".join([f"{c} = ?" for c in cols if c != pk_col])
-                                        update_vals = [clean_row[c] for c in cols if c != pk_col] + [clean_row[pk_col]]
-                                        if set_clause:
-                                            sql = f"UPDATE {sheet_name} SET {set_clause} WHERE {pk_col} = ?"
-                                            cursor.execute(sql, update_vals)
-                                            updated_count += 1
-                                    else:
-                                        insert_cols = cols
-                                        insert_vals = vals
-                                        if pk_col in cols and sheet_name in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
-                                            if pd.isna(clean_row[pk_col]) or str(clean_row[pk_col]).strip() == "":
-                                                insert_cols = [c for c in cols if c != pk_col]
-                                                insert_vals = [clean_row[c] for c in insert_cols]
-                                                
-                                        placeholders = ", ".join(["?"] * len(insert_cols))
-                                        col_names_str = ", ".join(insert_cols)
-                                        sql = f"INSERT OR REPLACE INTO {sheet_name} ({col_names_str}) VALUES ({placeholders})"
-                                        cursor.execute(sql, insert_vals)
-                                        inserted_count += 1
-                                        
-                                import_summary_log.append(f"Table **{sheet_name}**: Inserted {inserted_count}, Updated {updated_count}")
-                                
-                        conn.commit()
+                        # Replace entire table contents with updated grid state
+                        edited_df.to_sql(selected_table, conn, if_exists="replace", index=False)
                         conn.close()
-                        
-                        summary_msg = "\n".join(import_summary_log)
-                        set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n{summary_msg}", "success")
+                        set_transaction_dialog("Grid Update Successful", f"Table `{selected_table}` successfully updated with new/edited/deleted rows.", "success")
                     except Exception as e:
-                        set_transaction_dialog("Import Failed", f"Error during import processing: {str(e)}", "error")
+                        set_transaction_dialog("Grid Update Failed", f"Error saving changes: {str(e)}", "error")
                     st.rerun()
 
-        with tab_master:
-            st.subheader("Master Tables Data View & Quick Management")
-            selected_master_table = st.selectbox(
-                "Select Master Table to Inspect",
-                ["users", "cars", "fleet_drivers", "transit_groups", "transit_passengers", "meeting_rooms", "holidays", "trips"]
-            )
-            
+        with admin_tab3:
+            st.subheader("👥 User Management & Role Configuration")
             conn = get_db_connection()
-            master_df = pd.read_sql_query(f"SELECT * FROM {selected_master_table}", conn)
+            users_df = pd.read_sql_query("SELECT username, role, email_recipients AS 'Email', emp_name AS 'Employee Name' FROM users", conn)
             conn.close()
             
-            st.dataframe(master_df, use_container_width=True)
-            st.download_button(
-                f"📥 Export {selected_master_table} to Excel (.xlsx)",
-                data=export_df_to_excel(master_df, sheet_name=selected_master_table),
-                file_name=f"{selected_master_table}_{datetime.today().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.dataframe(users_df, use_container_width=True)
             
-            st.markdown("---")
-            st.subheader(f"Manage Records: `{selected_master_table}`")
-            
-            action_tab_c, action_tab_u, action_tab_d = st.tabs(["➕ Create (Add)", "✏️ Update (Edit)", "🗑️ Delete"])
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(f"PRAGMA table_info({selected_master_table})")
-            table_info = cursor.fetchall()
-            conn.close()
-            
-            columns_info = [(col[1], col[2], col[5]) for col in table_info]
-            
-            with action_tab_c:
-                st.markdown(f"**Add New Record to `{selected_master_table}`**")
-                with st.form(f"create_form_{selected_master_table}"):
-                    form_inputs = {}
-                    for col_name, col_type, is_pk in columns_info:
-                        if is_pk and selected_master_table in ["transit_groups", "transit_passengers"] and col_name == "id":
-                            st.text(f"{col_name}: (Auto-generated ID)")
-                            continue
-                        form_inputs[col_name] = st.text_input(f"{col_name} ({col_type})", key=f"create_{selected_master_table}_{col_name}")
-                    
-                    submitted_create = st.form_submit_button("Insert Record")
-                    if submitted_create:
-                        try:
-                            valid_inputs = {k: v for k, v in form_inputs.items() if v != ""}
-                            cols = list(valid_inputs.keys())
-                            vals = list(valid_inputs.values())
-                            
-                            conn = get_db_connection()
-                            placeholders = ", ".join(["?"] * len(cols))
-                            col_str = ", ".join(cols)
-                            sql = f"INSERT INTO {selected_master_table} ({col_str}) VALUES ({placeholders})"
-                            conn.execute(sql, vals)
-                            conn.commit()
-                            conn.close()
-                            set_transaction_dialog("Creation Successful", f"New record added to {selected_master_table}.", "success")
-                        except Exception as e:
-                            set_transaction_dialog("Creation Failed", f"Error: {str(e)}", "error")
-                        st.rerun()
-            
-            with action_tab_u:
-                st.markdown(f"**Update Existing Record in `{selected_master_table}`**")
-                if not master_df.empty:
-                    pk_cols = [col[1] for col in table_info if col[5] > 0]
-                    if not pk_cols:
-                        pk_cols = [master_df.columns[0]]
-                    
-                    pk_col = pk_cols[0]
-                    record_keys = master_df[pk_col].astype(str).tolist()
-                    selected_key = st.selectbox(f"Select Record by {pk_col}", record_keys, key=f"update_sel_{selected_master_table}")
-                    
-                    if selected_key:
-                        row_data = master_df[master_df[pk_col].astype(str) == selected_key].iloc[0]
-                        with st.form(f"update_form_{selected_master_table}"):
-                            update_inputs = {}
-                            for col_name, col_type, is_pk in columns_info:
-                                default_val = str(row_data[col_name]) if col_name in row_data and pd.notna(row_data[col_name]) else ""
-                                if col_name == pk_col:
-                                    st.text(f"{col_name} (Primary Key): {default_val}")
-                                    update_inputs[col_name] = default_val
-                                else:
-                                    update_inputs[col_name] = st.text_input(f"{col_name} ({col_type})", value=default_val, key=f"update_{selected_master_table}_{col_name}")
-                            
-                            submitted_update = st.form_submit_button("Save Changes")
-                            if submitted_update:
-                                try:
-                                    set_cols = [c for c in update_inputs.keys() if c != pk_col]
-                                    set_clause = ", ".join([f"{c} = ?" for c in set_cols])
-                                    vals = [update_inputs[c] for c in set_cols] + [selected_key]
-                                    
-                                    conn = get_db_connection()
-                                    sql = f"UPDATE {selected_master_table} SET {set_clause} WHERE {pk_col} = ?"
-                                    conn.execute(sql, vals)
-                                    conn.commit()
-                                    conn.close()
-                                    set_transaction_dialog("Update Successful", f"Record {selected_key} updated in {selected_master_table}.", "success")
-                                except Exception as e:
-                                    set_transaction_dialog("Update Failed", f"Error: {str(e)}", "error")
-                                st.rerun()
-                else:
-                    st.info("No records available to update.")
-            
-            with action_tab_d:
-                st.markdown(f"**Delete Record from `{selected_master_table}`**")
-                if not master_df.empty:
-                    pk_cols = [col[1] for col in table_info if col[5] > 0]
-                    if not pk_cols:
-                        pk_cols = [master_df.columns[0]]
-                    pk_col = pk_cols[0]
-                    
-                    record_keys_del = master_df[pk_col].astype(str).tolist()
-                    selected_key_del = st.selectbox(f"Select Record to Delete by {pk_col}", record_keys_del, key=f"delete_sel_{selected_master_table}")
-                    
-                    if st.button("Delete Selected Record", type="primary", key=f"btn_del_master_{selected_master_table}"):
+            with st.form("add_user_form"):
+                st.markdown("##### Add New User Account")
+                new_user = st.text_input("New Username")
+                new_pass = st.text_input("Password", type="password")
+                new_role = st.selectbox("Access Role", ["Owner", "Admin", "Staff"])
+                new_email = st.text_input("Email Address")
+                new_emp_name = st.text_input("Full Employee Name")
+                
+                submitted_user = st.form_submit_button("Create User Account")
+                if submitted_user:
+                    if not new_user or not new_pass:
+                        set_transaction_dialog("Creation Unsuccessful", "Username and password cannot be left blank.", "error")
+                    else:
                         try:
                             conn = get_db_connection()
-                            conn.execute(f"DELETE FROM {selected_master_table} WHERE {pk_col} = ?", (selected_key_del,))
+                            conn.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?)", (new_user, new_pass, new_role, new_email, new_emp_name))
                             conn.commit()
                             conn.close()
-                            set_transaction_dialog("Deletion Successful", f"Record {selected_key_del} deleted from {selected_master_table}.", "success")
+                            set_transaction_dialog("Creation Successful", f"User account '{new_user}' created.", "success")
                         except Exception as e:
-                            set_transaction_dialog("Deletion Failed", f"Error: {str(e)}", "error")
+                            set_transaction_dialog("Creation Unsuccessful", f"Failed: {str(e)}", "error")
                         st.rerun()
-                else:
-                    st.info("No records available to delete.")
