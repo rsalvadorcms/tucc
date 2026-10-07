@@ -942,19 +942,22 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
     st.markdown("---")
 
     conn = get_db_connection()
-    # Create a cursor explicitly
+    # Replace the pd.read_sql_query block around line 945 with this:
     cursor = conn.cursor()
     try:
-        home_unrolled_df = pd.read_sql_query('''
-            SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
-               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
-               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
-            FROM transit_groups tg
-            LEFT JOIN cars c ON tg.group_name = c.car_name
-            LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
-            LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        cursor.execute('''
+            SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number",
+                   c.driver_name AS "Driver Name", c.capacity AS "Capacity", 
+                   d.destination_name AS "Destination", t.trip_status AS "Status"
+            FROM daily_transit t
+            LEFT JOIN vehicles c ON t.vehicle_id = c.id
+            LEFT JOIN transport_groups tg ON c.group_id = tg.id
+            LEFT JOIN destinations d ON t.destination_id = d.id
             ORDER BY tg.group_name
-        ''', con=conn)
+        ''')
+        data = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        home_unrolled_df = pd.DataFrame(data, columns=columns)
     finally:
         cursor.close()
     conn.close()
