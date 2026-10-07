@@ -43,7 +43,6 @@ if not os.path.exists(NEWS_DIR):
 # ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE
 # ==============================================================================
 @st.cache_resource
-py_cache_resource_dummy = None # Marker for connection cache resource
 def get_db_connection():
     if "postgres" in st.secrets:
         conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
@@ -57,7 +56,6 @@ def get_db_connection():
             cursor_factory=psycopg2.extras.DictCursor
         )
     return conn
-
 # Cached Data Query Functions with st.cache_data
 @st.cache_data
 def get_home_unrolled_data():
