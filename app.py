@@ -953,6 +953,9 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
         ORDER BY tg.group_name
     ''')
+    data = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description]
+    home_unrolled_df = pd.DataFrame(data, columns=columns)
     conn.close()
 
     if not home_unrolled_df.empty:
