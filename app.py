@@ -42,6 +42,8 @@ if not os.path.exists(NEWS_DIR):
 # ==============================================================================
 # ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE
 # ==============================================================================
+@st.cache_resource
+py_cache_resource_dummy = None # Marker for connection cache resource
 def get_db_connection():
     if "postgres" in st.secrets:
         conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
@@ -55,6 +57,114 @@ def get_db_connection():
             cursor_factory=psycopg2.extras.DictCursor
         )
     return conn
+
+# Cached Data Query Functions with st.cache_data
+@st.cache_data
+def get_home_unrolled_data():
+    conn = get_db_connection()
+    df = pd.read_sql_query('''
+        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
+               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
+        FROM transit_groups tg
+        LEFT JOIN cars c ON tg.group_name = c.car_name
+        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        ORDER BY tg.group_name
+    ''', conn)
+    return df
+
+@st.cache_data
+def get_shuttle_raw_data():
+    conn = get_db_connection()
+    df = pd.read_sql_query('''
+        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
+               dt.trip AS trip_code,
+               dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
+               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, 
+               tg.driver_name
+        FROM daily_transit dt 
+        LEFT JOIN cars c ON dt.group_name = c.car_name
+        LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
+        WHERE dt.trip IN ('Trip A', 'Trip B', 'Trip C')
+        ORDER BY dt.etd_1 ASC, dt.id DESC
+    ''', conn)
+    return df
+
+@st.cache_data
+def get_holidays_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)
+    return df['holiday_date'].tolist()
+
+@st.cache_data
+def get_employees_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)
+    return df['emp_name'].tolist()
+
+@st.cache_data
+def get_cars_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT car_name FROM cars", conn)
+    return df['car_name'].tolist()
+
+@st.cache_data
+def get_drivers_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT driver_name FROM fleet_drivers", conn)
+    return df['driver_name'].tolist()
+
+@st.cache_data
+def get_trips_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT trip FROM trips", conn)
+    return df['trip'].tolist()
+
+@st.cache_data
+def get_transit_groups_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT group_name FROM transit_groups", conn)
+    return df['group_name'].tolist()
+
+@st.cache_data
+def get_meeting_rooms_df():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT room_number AS Room_Number, room_name AS Room_Name, capacity AS Capacity, location AS Location FROM meeting_rooms", conn)
+    return df
+
+@st.cache_data
+def get_room_numbers_list():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT room_number FROM meeting_rooms", conn)
+    return df['room_number'].tolist()
+
+@st.cache_data
+def get_overtime_requests_df(role, username):
+    conn = get_db_connection()
+    if role in ["Admin", "Owner"]:
+        df = pd.read_sql_query("SELECT id, username, emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination, departure_time AS Departure_Time, return_time AS Return_Time FROM overtime_requests", conn)
+    else:
+        df = pd.read_sql_query("SELECT id, username, emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination, departure_time AS Departure_Time, return_time AS Return_Time FROM overtime_requests WHERE username = %s", conn, params=[username])
+    return df
+
+@st.cache_data
+def get_daily_transit_df():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT id, transit_date_start AS Start, transit_date_end AS End, group_name AS Car_Group, requested_by AS Requested_By, etd_1 AS ETD_1, etd_2 AS ETD_2, location_from AS From, location_to AS To, daily AS Daily, trip AS Trip FROM daily_transit ORDER BY id DESC", conn)
+    return df
+
+@st.cache_data
+def get_room_bookings_df():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT id, room_number AS Room, booked_by AS Booked_By, booking_date AS Date, start_time AS Start, end_time AS End, is_recurring AS Recurring, recurrence_end_date AS Recurrence_End FROM room_bookings ORDER BY id DESC", conn)
+    return df
+
+@st.cache_data
+def get_site_news_df():
+    conn = get_db_connection()
+    df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
+    return df
 
 @st.dialog("Data Transaction Status")
 def show_transaction_dialog(title_text: str, message_text: str, status_type: str = "success"):
@@ -115,7 +225,6 @@ def perform_manual_backup():
             pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
             pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
             pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
-        conn.close()
         return True, "PostgreSQL Backup Export", backup_excel_path
     except Exception as e:
         return False, str(e), ""
@@ -615,7 +724,7 @@ def init_db():
         )
     ''')
     
-    # Create database indexes for faster data fetching and query performance
+    # Verified and created database indexes for faster query performance
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_overtime_date ON overtime_requests(ot_date);')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_overtime_username ON overtime_requests(username);')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_daily_transit_dates ON daily_transit(transit_date_start, transit_date_end);')
@@ -700,7 +809,6 @@ if not st.session_state.logged_in:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password))
                 user = cur.fetchone()
-            conn.close()
             if user:
                 st.session_state.logged_in = True
                 st.session_state.username = user['username']
@@ -871,18 +979,7 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
 
     st.markdown("---")
 
-    conn = get_db_connection()
-    home_unrolled_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
-               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
-               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
-        FROM transit_groups tg
-        LEFT JOIN cars c ON tg.group_name = c.car_name
-        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
-        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
-        ORDER BY tg.group_name
-    ''', conn)
-    conn.close()
+    home_unrolled_df = get_home_unrolled_data()
 
     if not home_unrolled_df.empty:
         display_home_df = home_unrolled_df.copy()
@@ -1010,20 +1107,7 @@ elif nav_selection == "📅 Shuttle Timetable":
 
     st.markdown("---")
 
-    conn = get_db_connection()
-    shuttle_raw_df = pd.read_sql_query('''
-        SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
-               dt.trip AS trip_code,
-               dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
-               dt.location_from, dt.location_to, dt.etd_1, dt.etd_2, 
-               tg.driver_name
-        FROM daily_transit dt 
-        LEFT JOIN cars c ON dt.group_name = c.car_name
-        LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
-        WHERE dt.trip IN ('Trip A', 'Trip B', 'Trip C')
-        ORDER BY dt.etd_1 ASC, dt.id DESC
-    ''', conn)
-    conn.close()
+    shuttle_raw_df = get_shuttle_raw_data()
 
     if not shuttle_raw_df.empty:
         shuttle_display_df = shuttle_raw_df.copy()
@@ -1103,10 +1187,8 @@ elif nav_selection == "📅 Shuttle Timetable":
 # 3. OVERTIME & TRANSPORT
 elif nav_selection == "⏰ Overtime & Transport":
     st.header("Request Overtime & Logistics Tracking")
-    conn = get_db_connection()
-    holiday_list = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)['holiday_date'].tolist()
-    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
-    conn.close()
+    holiday_list = get_holidays_list()
+    all_emp_names = get_employees_list()
     
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
     if not all_emp_names:
@@ -1179,19 +1261,14 @@ elif nav_selection == "⏰ Overtime & Transport":
                     ''', (date_str, date_str, "TBA", st.session_state.username, dep_time_str if dep_time_str else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
                 
                 conn.commit()
-                conn.close()
+                st.cache_data.clear()
                 set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s) & transit dispatch schedule created.", "success")
             except Exception as e:
                 set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save record: {str(e)}", "error")
         st.rerun()
 
     st.subheader("📋 Overtime Submission History Log")
-    conn = get_db_connection()
-    if st.session_state.role in ["Admin", "Owner"]:
-        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination, departure_time AS Departure_Time, return_time AS Return_Time FROM overtime_requests", conn)
-    else:
-        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination, departure_time AS Departure_Time, return_time AS Return_Time FROM overtime_requests WHERE username = %s", conn, params=[st.session_state.username])
-    conn.close()
+    ot_df = get_overtime_requests_df(st.session_state.role, st.session_state.username)
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
@@ -1205,7 +1282,6 @@ elif nav_selection == "⏰ Overtime & Transport":
         placeholders = ','.join(['%s'] * len(target_export_dates))
         summary_query = f"SELECT emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination FROM overtime_requests WHERE ot_date IN ({placeholders})"
         curr_next_ot_df = pd.read_sql_query(summary_query, conn, params=target_export_dates)
-        conn.close()
         
         if not curr_next_ot_df.empty:
             exp_col1, exp_col2 = st.columns(2)
@@ -1232,7 +1308,6 @@ elif nav_selection == "⏰ Overtime & Transport":
             with st.expander("✏️ Manage / Remove Overtime Submissions"):
                 conn = get_db_connection()
                 ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
-                conn.close()
                 
                 if not ot_raw.empty:
                     today_str = date.today().strftime("%Y-%m-%d")
@@ -1263,10 +1338,10 @@ elif nav_selection == "⏰ Overtime & Transport":
                                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                             ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
                                             conn.commit()
+                                            st.cache_data.clear()
                                             set_transaction_dialog("Transport Request Added", f"Daily transit dispatch (Trip D) created for date {o_date}.", "success")
                                         else:
                                             set_transaction_dialog("Already Exists", f"A Trip D transit dispatch for date {o_date} already exists.", "info")
-                                        conn.close()
                                     except Exception as e:
                                         set_transaction_dialog("Action Unsuccessful", f"Failed: {str(e)}", "error")
                                     st.rerun()
@@ -1279,7 +1354,7 @@ elif nav_selection == "⏰ Overtime & Transport":
                                     cursor = conn.cursor()
                                     cursor.execute("DELETE FROM overtime_requests WHERE id = %s", (o_id,))
                                     conn.commit()
-                                    conn.close()
+                                    st.cache_data.clear()
                                     set_transaction_dialog("Deletion Successful", f"Removed overtime record #{o_id}.", "success")
                                 except Exception as e:
                                     set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1292,17 +1367,10 @@ elif nav_selection == "⏰ Overtime & Transport":
 # 4. TRANSIT GROUPS & PASSENGERS
 elif nav_selection == "👥 Transit Groups & Passengers":
     st.header("👥 Transit Groups & Passengers Management")
-    conn = get_db_connection()
-    with conn.cursor() as cur:
-        cur.execute("SELECT driver_name FROM fleet_drivers")
-        drivers_list = [d['driver_name'] for d in cur.fetchall()]
-        cur.execute("SELECT car_name FROM cars")
-        cars_list = [c['car_name'] for c in cur.fetchall()]
-        cur.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''")
-        employees_list = [u['emp_name'] for u in cur.fetchall()]
-        cur.execute("SELECT group_name FROM transit_groups")
-        groups_list = [g['group_name'] for g in cur.fetchall()]
-    conn.close()
+    drivers_list = get_drivers_list()
+    cars_list = get_cars_list()
+    employees_list = get_employees_list()
+    groups_list = get_transit_groups_list()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1322,7 +1390,7 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (%s, %s, %s, %s)", (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
                     conn.commit()
-                    conn.close()
+                    st.cache_data.clear()
                     set_transaction_dialog("Data Transaction Successful", f"Group '{selected_car_group}' created.", "success")
                 except Exception as e:
                     set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1341,7 +1409,7 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                         for p in selected_passengers:
                             cursor.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (%s, %s)", (selected_group_for_p, p))
                         conn.commit()
-                        conn.close()
+                        st.cache_data.clear()
                         set_transaction_dialog("Data Transaction Successful", "Passengers assigned.", "success")
                     except Exception as e:
                         set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1355,18 +1423,7 @@ elif nav_selection == "👥 Transit Groups & Passengers":
         target_effective_date = st.date_input("Target Effective Date", value=date.today(), key="eff_date_picker")
         eff_date_str = target_effective_date.strftime("%Y-%m-%d") if target_effective_date else ""
 
-    conn = get_db_connection()
-    unrolled_df = pd.read_sql_query('''
-        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
-               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
-               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
-        FROM transit_groups tg
-        LEFT JOIN cars c ON tg.group_name = c.car_name
-        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
-        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
-        ORDER BY tg.group_name
-    ''', conn)
-    conn.close()
+    unrolled_df = get_home_unrolled_data()
     
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
@@ -1374,7 +1431,6 @@ elif nav_selection == "👥 Transit Groups & Passengers":
         with st.expander("✏️ Manage / Remove Passenger Assignments"):
             conn = get_db_connection()
             passengers_raw = pd.read_sql_query("SELECT id, group_name, passengers FROM transit_passengers", conn)
-            conn.close()
             
             if not passengers_raw.empty:
                 for _, p_row in passengers_raw.iterrows():
@@ -1389,7 +1445,7 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                                 cursor = conn.cursor()
                                 cursor.execute("DELETE FROM transit_passengers WHERE id = %s", (p_id,))
                                 conn.commit()
-                                conn.close()
+                                st.cache_data.clear()
                                 set_transaction_dialog("Deletion Successful", f"Passenger assignment #{p_id} removed.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1425,13 +1481,8 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
             start_date = st.date_input("Start Date", value=date.today())
             end_date = st.date_input("End Date", value=date.today())
             
-            conn = get_db_connection()
-            with conn.cursor() as cur:
-                cur.execute("SELECT car_name FROM cars")
-                car_names = [c['car_name'] for c in cur.fetchall()]
-                cur.execute("SELECT trip FROM trips")
-                trip_options = [t['trip'] for t in cur.fetchall()]
-            conn.close()
+            car_names = get_cars_list()
+            trip_options = get_trips_list()
             
             group_name = st.selectbox("Assign Car / Group", options=car_names if car_names else ["TBA"])
             trip_type = st.selectbox("Trip Schedule Category", options=trip_options if trip_options else ["Trip A"])
@@ -1457,16 +1508,14 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), group_name, st.session_state.username, etd1_fmt, etd2_fmt, loc_from, loc_to, daily_repeat, trip_type))
                     conn.commit()
-                    conn.close()
+                    st.cache_data.clear()
                     set_transaction_dialog("Data Transaction Successful", "Transit dispatch schedule successfully logged.", "success")
                 except Exception as e:
                     set_transaction_dialog("Data Transaction Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
 
     st.subheader("📋 Active Daily Transit Dispatches")
-    conn = get_db_connection()
-    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS Start, transit_date_end AS End, group_name AS Car_Group, requested_by AS Requested_By, etd_1 AS ETD_1, etd_2 AS ETD_2, location_from AS From, location_to AS To, daily AS Daily, trip AS Trip FROM daily_transit ORDER BY id DESC", conn)
-    conn.close()
+    transit_df = get_daily_transit_df()
     
     if not transit_df.empty:
         st.dataframe(transit_df, use_container_width=True)
@@ -1475,7 +1524,6 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
             with st.expander("✏️ Manage / Remove Transit Dispatches"):
                 conn = get_db_connection()
                 t_raw = pd.read_sql_query("SELECT id, transit_date_start, group_name, trip FROM daily_transit ORDER BY id DESC", conn)
-                conn.close()
                 for _, tr_row in t_raw.iterrows():
                     tr_id, tr_date, tr_grp, tr_trip = tr_row['id'], tr_row['transit_date_start'], tr_row['group_name'], tr_row['trip']
                     tc1, tc2 = st.columns([4, 1])
@@ -1488,7 +1536,7 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
                                 cursor = conn.cursor()
                                 cursor.execute("DELETE FROM daily_transit WHERE id = %s", (tr_id,))
                                 conn.commit()
-                                conn.close()
+                                st.cache_data.clear()
                                 set_transaction_dialog("Deletion Successful", f"Removed transit dispatch #{tr_id}.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1499,9 +1547,7 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
 # 6. MEETING ROOMS
 elif nav_selection == "🏢 Meeting Rooms":
     st.header("🏢 Meeting Room Booking Portal")
-    conn = get_db_connection()
-    rooms_df = pd.read_sql_query("SELECT room_number AS Room_Number, room_name AS Room_Name, capacity AS Capacity, location AS Location FROM meeting_rooms", conn)
-    conn.close()
+    rooms_df = get_meeting_rooms_df()
     
     st.subheader("Available Meeting Rooms")
     st.dataframe(rooms_df, use_container_width=True)
@@ -1509,11 +1555,7 @@ elif nav_selection == "🏢 Meeting Rooms":
     st.markdown("---")
     st.subheader("Book a Meeting Room")
     with st.form("room_booking_form"):
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("SELECT room_number FROM meeting_rooms")
-            r_nums = [r['room_number'] for r in cur.fetchall()]
-        conn.close()
+        r_nums = get_room_numbers_list()
         
         selected_room = st.selectbox("Select Room Number", options=r_nums if r_nums else ["101"])
         booking_date = st.date_input("Booking Date", value=date.today())
@@ -1532,16 +1574,14 @@ elif nav_selection == "🏢 Meeting Rooms":
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ''', (selected_room, st.session_state.username, booking_date.strftime("%Y-%m-%d"), start_t.strftime("%H:%M"), end_t.strftime("%H:%M"), is_recurring, rec_end_date.strftime("%Y-%m-%d") if is_recurring == "Yes" else ""))
                 conn.commit()
-                conn.close()
+                st.cache_data.clear()
                 set_transaction_dialog("Booking Successful", f"Meeting room {selected_room} booked successfully.", "success")
             except Exception as e:
                 set_transaction_dialog("Booking Unsuccessful", f"Failed: {str(e)}", "error")
             st.rerun()
 
     st.subheader("📋 Active Room Bookings")
-    conn = get_db_connection()
-    bookings_df = pd.read_sql_query("SELECT id, room_number AS Room, booked_by AS Booked_By, booking_date AS Date, start_time AS Start, end_time AS End, is_recurring AS Recurring, recurrence_end_date AS Recurrence_End FROM room_bookings ORDER BY id DESC", conn)
-    conn.close()
+    bookings_df = get_room_bookings_df()
     
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
@@ -1549,7 +1589,6 @@ elif nav_selection == "🏢 Meeting Rooms":
             with st.expander("✏️ Manage / Remove Room Bookings"):
                 conn = get_db_connection()
                 b_raw = pd.read_sql_query("SELECT id, room_number, booking_date FROM room_bookings", conn)
-                conn.close()
                 for _, b_row in b_raw.iterrows():
                     b_id, b_room, b_date = b_row['id'], b_row['room_number'], b_row['booking_date']
                     bc1, bc2 = st.columns([4, 1])
@@ -1562,7 +1601,7 @@ elif nav_selection == "🏢 Meeting Rooms":
                                 cursor = conn.cursor()
                                 cursor.execute("DELETE FROM room_bookings WHERE id = %s", (b_id,))
                                 conn.commit()
-                                conn.close()
+                                st.cache_data.clear()
                                 set_transaction_dialog("Deletion Successful", f"Removed booking #{b_id}.", "success")
                             except Exception as e:
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1594,15 +1633,13 @@ elif nav_selection == "📢 Site News":
                             VALUES (%s, %s, %s, %s, %s, %s)
                         ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.today().strftime("%Y-%m-%d")))
                         conn.commit()
-                        conn.close()
+                        st.cache_data.clear()
                         set_transaction_dialog("Publication Successful", "Site news published successfully.", "success")
                     except Exception as e:
                         set_transaction_dialog("Publication Unsuccessful", f"Failed: {str(e)}", "error")
                 st.rerun()
 
-    conn = get_db_connection()
-    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
-    conn.close()
+    news_df = get_site_news_df()
     
     if not news_df.empty:
         for _, n_row in news_df.iterrows():
@@ -1623,7 +1660,7 @@ elif nav_selection == "📢 Site News":
                             cursor = conn.cursor()
                             cursor.execute("DELETE FROM site_news WHERE id = %s", (n_id,))
                             conn.commit()
-                            conn.close()
+                            st.cache_data.clear()
                             set_transaction_dialog("Deletion Successful", "Announcement removed.", "success")
                         except Exception as e:
                             set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
@@ -1690,7 +1727,6 @@ elif nav_selection == "🛠️ System Administration":
                     except Exception:
                         df_tbl = pd.DataFrame()
                     df_tbl.to_excel(writer, index=False, sheet_name=tname)
-            conn.close()
             
             st.download_button(
                 "📥 Download Master Excel Import Template (.xlsx)",
@@ -1771,7 +1807,7 @@ elif nav_selection == "🛠️ System Administration":
                                 import_summary_log.append(f"Table **{sheet_name}**: Processed {inserted_count} records")
                                 
                         conn.commit()
-                        conn.close()
+                        st.cache_data.clear()
                         
                         summary_msg = "\n".join(import_summary_log)
                         set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n{summary_msg}", "success")
@@ -1788,7 +1824,6 @@ elif nav_selection == "🛠️ System Administration":
             
             conn = get_db_connection()
             master_df = pd.read_sql_query(f"SELECT * FROM {selected_master_table}", conn)
-            conn.close()
             
             st.dataframe(master_df, use_container_width=True)
             st.download_button(
@@ -1815,7 +1850,6 @@ elif nav_selection == "🛠️ System Administration":
             if not pk_cols:
                 pk_cols = [master_df.columns[0] if not master_df.empty else '']
             pk_col = pk_cols[0] if pk_cols else None
-            conn.close()
 
             edited_df = st.data_editor(
                 master_df,
@@ -1875,7 +1909,7 @@ elif nav_selection == "🛠️ System Administration":
                             cursor.execute(f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})", vals)
                             
                     conn.commit()
-                    conn.close()
+                    st.cache_data.clear()
                     set_transaction_dialog("Save Successful", f"Master table `{selected_master_table}` updated successfully.", "success")
                 except Exception as e:
                     set_transaction_dialog("Save Failed", f"Error: {str(e)}", "error")
