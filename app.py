@@ -1188,9 +1188,9 @@ elif nav_selection == "⏰ Overtime & Transport":
     st.subheader("📋 Overtime Submission History Log")
     conn = get_db_connection()
     if st.session_state.role in ["Admin", "Owner"]:
-        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests", conn)
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS "Employee Name", ot_date AS "Date", start_time AS "Start Time", end_time AS "End Time", needs_transport AS "Needs Transport", origin AS "Origin", destination AS "Destination", departure_time AS "Departure Time", return_time AS "Return Time" FROM overtime_requests", conn)
     else:
-        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests WHERE username = %s", conn, params=[st.session_state.username])
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS "Employee Name", ot_date AS "Date", start_time AS "Start Time", end_time AS "End Time", needs_transport AS "Needs Transport", origin AS "Origin", destination AS "Destination", departure_time AS "Departure Time", return_time AS "Return Time" FROM overtime_requests WHERE username = %s", conn, params=[st.session_state.username])
     conn.close()
     
     if not ot_df.empty:
@@ -1203,7 +1203,7 @@ elif nav_selection == "⏰ Overtime & Transport":
             
         conn = get_db_connection()
         placeholders = ','.join(['%s'] * len(target_export_dates))
-        summary_query = f"SELECT emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination' FROM overtime_requests WHERE ot_date IN ({placeholders})"
+        summary_query = f"SELECT emp_name AS "Employee Name", ot_date AS "Date", start_time AS "Start Time", end_time AS "End Time", needs_transport AS "Needs Transport", origin AS "Origin", destination AS "Destination" FROM overtime_requests WHERE ot_date IN ({placeholders})"
         curr_next_ot_df = pd.read_sql_query(summary_query, conn, params=target_export_dates)
         conn.close()
         
@@ -1465,7 +1465,7 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
 
     st.subheader("📋 Active Daily Transit Dispatches")
     conn = get_db_connection()
-    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS 'Start', transit_date_end AS 'End', group_name AS 'Car Group', requested_by AS 'Requested By', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', location_from AS 'From', location_to AS 'To', daily AS 'Daily', trip AS 'Trip' FROM daily_transit ORDER BY id DESC", conn)
+    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS "Start", transit_date_end AS "End", group_name AS "Car Group", requested_by AS "Requested By", etd_1 AS "ETD 1", etd_2 AS "ETD 2", location_from AS "From", location_to AS "To", daily AS "Daily", trip AS "Trip" FROM daily_transit ORDER BY id DESC", conn)
     conn.close()
     
     if not transit_df.empty:
@@ -1500,7 +1500,7 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
 elif nav_selection == "🏢 Meeting Rooms":
     st.header("🏢 Meeting Room Booking Portal")
     conn = get_db_connection()
-    rooms_df = pd.read_sql_query("SELECT room_number AS 'Room Number', room_name AS 'Room Name', capacity AS 'Capacity', location AS 'Location' FROM meeting_rooms", conn)
+    rooms_df = pd.read_sql_query("SELECT room_number AS "Room Number", room_name AS "Room Name", capacity AS "Capacity", location AS "Location" FROM meeting_rooms", conn)
     conn.close()
     
     st.subheader("Available Meeting Rooms")
