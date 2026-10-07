@@ -1540,7 +1540,7 @@ elif nav_selection == "🏢 Meeting Rooms":
 
     st.subheader("📋 Active Room Bookings")
     conn = get_db_connection()
-    bookings_df = pd.read_sql_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring', recurrence_end_date AS 'Recurrence End' FROM room_bookings ORDER BY id DESC", conn)
+    bookings_df = pd.read_sql_query("SELECT id, room_number AS Room, booked_by AS Booked_By, booking_date AS Date, start_time AS Start, end_time AS End, is_recurring AS Recurring, recurrence_end_date AS Recurrence_End FROM room_bookings ORDER BY id DESC", conn)
     conn.close()
     
     if not bookings_df.empty:
