@@ -42,7 +42,7 @@ if not os.path.exists(NEWS_DIR):
 # ==============================================================================
 # ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE
 # ==============================================================================
-@st.cache_resource
+# @st.cache_resource
 def get_db_connection():
     if "postgres" in st.secrets:
         conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
