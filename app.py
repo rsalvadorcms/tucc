@@ -40,103 +40,21 @@ if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
 # ==============================================================================
-# ⚙ 1. HELPER FUNCTIONS & SUPABASE DATABASE ENGINE
+# ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE
 # ==============================================================================
-
-class PostgresCursorWrapper:
-    def __init__(self, cursor):
-        self._cursor = cursor
-
-    @property
-    def description(self):
-        return self._cursor.description
-
-    def execute(self, query, vars=None):
-        pq = query.replace('?', '%s')
-        
-        # Intercept PRAGMA table_info for compatibility with master tables inspection
-        if pq.strip().upper().startswith("PRAGMA TABLE_INFO"):
-            m = re.search(r"PRAGMA\s+table_info\s*\(\s*['\"]?(\w+)['\"]?\s*\)", pq, re.IGNORECASE)
-            if m:
-                tname = m.group(1)
-                pq = """
-                    SELECT 
-                        0 as cid,
-                        column_name as name,
-                        data_type as type,
-                        CASE WHEN is_nullable = 'YES' THEN 0 ELSE 1 END as notnull,
-                        column_default as dflt_value,
-                        CASE WHEN column_name IN (
-                            SELECT kcu.column_name
-                            FROM information_schema.table_constraints tc
-                            JOIN information_schema.key_column_usage kcu 
-                              ON tc.constraint_name = kcu.constraint_name
-                            WHERE tc.table_name = %s AND tc.constraint_type = 'PRIMARY KEY'
-                        ) THEN 1 ELSE 0 END as pk
-                    FROM information_schema.columns
-                    WHERE table_name = %s
-                    ORDER BY ordinal_position
-                """
-                self._cursor.execute(pq, (tname, tname))
-                return self
-
-        if vars is not None:
-            self._cursor.execute(pq, vars)
-        else:
-            self._cursor.execute(pq)
-        return self
-
-    def fetchone(self):
-        return self._cursor.fetchone()
-
-    def fetchall(self):
-        return self._cursor.fetchall()
-
-    def fetchmany(self, size=None):
-        return self._cursor.fetchmany(size)
-
-    @property
-    def rowcount(self):
-        return self._cursor.rowcount
-
-    def __iter__(self):
-        return iter(self._cursor)
-
-class PostgresConnWrapper:
-    def __init__(self, conn):
-        self._conn = conn
-        self.row_factory = None
-
-    def execute(self, query, vars=None):
-        cur = self.cursor()
-        cur.execute(query, vars)
-        return cur
-
-    def cursor(self):
-        pg_cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        return PostgresCursorWrapper(pg_cur)
-
-    def commit(self):
-        self._conn.commit()
-
-    def rollback(self):
-        self._conn.rollback()
-
-    def close(self):
-        self._conn.close()
-
 def get_db_connection():
-    if "supabase" in st.secrets and "connection_string" in st.secrets["supabase"]:
-        conn_str = st.secrets["supabase"]["connection_string"]
-    elif "supabase" in st.secrets:
-        s = st.secrets["supabase"]
-        conn_str = f"host={s.get('host')} dbname={s.get('database', 'postgres')} user={s.get('user', 'postgres')} password={s.get('password')} port={s.get('port', 5432)}"
+    if "postgres" in st.secrets:
+        conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
     else:
-        st.error("Supabase credentials not configured in Streamlit secrets (`.streamlit/secrets.toml`).")
-        st.stop()
-    
-    conn = psycopg2.connect(conn_str)
-    return PostgresConnWrapper(conn)
+        conn = psycopg2.connect(
+            dbname=os.environ.get("PG_DATABASE", "office_operations"),
+            user=os.environ.get("PG_USER", "postgres"),
+            password=os.environ.get("PG_PASSWORD", "password"),
+            host=os.environ.get("PG_HOST", "localhost"),
+            port=os.environ.get("PG_PORT", "5432"),
+            cursor_factory=psycopg2.extras.DictCursor
+        )
+    return conn
 
 @st.dialog("Data Transaction Status")
 def show_transaction_dialog(title_text: str, message_text: str, status_type: str = "success"):
@@ -198,7 +116,7 @@ def perform_manual_backup():
             pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
             pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
         conn.close()
-        return True, "Supabase Cloud Backup", backup_excel_path
+        return True, "PostgreSQL Backup Export", backup_excel_path
     except Exception as e:
         return False, str(e), ""
 
@@ -698,33 +616,33 @@ def init_db():
     ''')
     
     cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()['count'] == 0:
-        cursor.execute("INSERT INTO users VALUES ('owner', 'owner123', 'Owner', 'owner@company.com', 'System Owner')")
-        cursor.execute("INSERT INTO users VALUES ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator')")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO users VALUES (%s, %s, %s, %s, %s)", ('owner', 'owner123', 'Owner', 'owner@company.com', 'System Owner'))
+        cursor.execute("INSERT INTO users VALUES (%s, %s, %s, %s, %s)", ('admin', 'admin123', 'Admin', 'admin@company.com', 'System Administrator'))
 
     cursor.execute("SELECT COUNT(*) FROM trips")
-    if cursor.fetchone()['count'] == 0:
+    if cursor.fetchone()[0] == 0:
         for t_code, t_desc in [("Trip A", "Yard to Yard"), ("Trip B", "Sunday Panbil - Wasco - Panbil"), ("Trip C", "Panbil - Destination - Panbil"), ("Trip D", "Overtime Dispatch Route")]:
-            cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (%s, %s) ON CONFLICT (trip) DO NOTHING", (t_code, t_desc))
+            cursor.execute("INSERT INTO trips (trip, trip_name) VALUES (%s, %s)", (t_code, t_desc))
         
     cursor.execute("SELECT COUNT(*) FROM meeting_rooms")
-    if cursor.fetchone()['count'] == 0:
-        cursor.execute("INSERT INTO meeting_rooms VALUES ('101', 'Boardroom', 15, '1st Floor')")
-        cursor.execute("INSERT INTO meeting_rooms VALUES ('102', 'Huddle Room Alpha', 6, '2nd Floor')")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO meeting_rooms VALUES (%s, %s, %s, %s)", ('101', 'Boardroom', 15, '1st Floor'))
+        cursor.execute("INSERT INTO meeting_rooms VALUES (%s, %s, %s, %s)", ('102', 'Huddle Room Alpha', 6, '2nd Floor'))
 
     cursor.execute("SELECT COUNT(*) FROM fleet_drivers")
-    if cursor.fetchone()['count'] == 0:
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('John Doe', '+628111222333')")
-        cursor.execute("INSERT INTO fleet_drivers VALUES ('Jane Smith', '+628999888777')")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO fleet_drivers VALUES (%s, %s)", ('John Doe', '+628111222333'))
+        cursor.execute("INSERT INTO fleet_drivers VALUES (%s, %s)", ('Jane Smith', '+628999888777'))
 
     cursor.execute("SELECT COUNT(*) FROM cars WHERE car_name = 'TBA'")
-    if cursor.fetchone()['count'] == 0:
-        cursor.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES ('TBA', 'TBA', 'TBA', 'TBA')")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO cars (car_name, plate_number, vehicle, color) VALUES (%s, %s, %s, %s)", ('TBA', 'TBA', 'TBA', 'TBA'))
 
     cursor.execute("SELECT COUNT(*) FROM cars")
-    if cursor.fetchone()['count'] == 1:
-        cursor.execute("INSERT INTO cars VALUES ('Car A', 'B 1234 ABC', 'Toyota Avanza', 'Black') ON CONFLICT (car_name) DO NOTHING")
-        cursor.execute("INSERT INTO cars VALUES ('Car B', 'B 5678 XYZ', 'Toyota Innova', 'White') ON CONFLICT (car_name) DO NOTHING")
+    if cursor.fetchone()[0] == 1:
+        cursor.execute("INSERT INTO cars VALUES (%s, %s, %s, %s) ON CONFLICT (car_name) DO NOTHING", ('Car A', 'B 1234 ABC', 'Toyota Avanza', 'Black'))
+        cursor.execute("INSERT INTO cars VALUES (%s, %s, %s, %s) ON CONFLICT (car_name) DO NOTHING", ('Car B', 'B 5678 XYZ', 'Toyota Innova', 'White'))
         
     conn.commit()
     conn.close()
@@ -732,16 +650,18 @@ def init_db():
 init_db()
 
 def run_migrations():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='cars' AND column_name='color'")
-        if not cursor.fetchone():
-            cursor.execute("ALTER TABLE cars ADD COLUMN color TEXT DEFAULT 'Black'")
-            conn.commit()
-        conn.close()
-    except Exception:
-        pass
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name = 'cars'
+    """)
+    columns = [col[0] for col in cursor.fetchall()]
+    if "color" not in columns:
+        cursor.execute("ALTER TABLE cars ADD COLUMN color TEXT DEFAULT 'Black'")
+    conn.commit()
+    conn.close()
 
 run_migrations()
 trigger_transaction_dialog()
@@ -942,24 +862,16 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
     st.markdown("---")
 
     conn = get_db_connection()
-    # Replace the pd.read_sql_query block around line 945 with this:
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number",
-                   c.driver_name AS "Driver Name", c.capacity AS "Capacity", 
-                   d.destination_name AS "Destination", t.trip_status AS "Status"
-            FROM daily_transit t
-            LEFT JOIN vehicles c ON t.vehicle_id = c.id
-            LEFT JOIN transport_groups tg ON c.group_id = tg.id
-            LEFT JOIN destinations d ON t.destination_id = d.id
-            ORDER BY tg.group_name
-        ''')
-        data = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-        home_unrolled_df = pd.DataFrame(data, columns=columns)
-    finally:
-        cursor.close()
+    home_unrolled_df = pd.read_sql_query('''
+        SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
+               c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
+               tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
+        FROM transit_groups tg
+        LEFT JOIN cars c ON tg.group_name = c.car_name
+        LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
+        LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
+        ORDER BY tg.group_name
+    ''', conn)
     conn.close()
 
     if not home_unrolled_df.empty:
@@ -1237,19 +1149,21 @@ elif nav_selection == "⏰ Overtime & Transport":
         else:
             try:
                 conn = get_db_connection()
+                cursor = conn.cursor()
                 for staff in selected_staff_members:
-                    conn.execute('''
+                    cursor.execute('''
                         INSERT INTO overtime_requests (username, emp_name, ot_date, start_time, end_time, needs_transport, origin, destination, departure_time, return_time)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (st.session_state.username, staff, date_str, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), needs_transport, origin, destination, dep_time_str, ret_time_str))
                 
-                existing_dispatch = conn.execute(
+                cursor.execute(
                     "SELECT id FROM daily_transit WHERE transit_date_start = %s AND transit_date_end = %s AND trip = 'Trip D'", 
                     (date_str, date_str)
-                ).fetchone()
+                )
+                existing_dispatch = cursor.fetchone()
                 
                 if not existing_dispatch:
-                    conn.execute('''
+                    cursor.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (date_str, date_str, "TBA", st.session_state.username, dep_time_str if dep_time_str else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
@@ -1326,13 +1240,15 @@ elif nav_selection == "⏰ Overtime & Transport":
                                 if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
                                     try:
                                         conn = get_db_connection()
-                                        existing_dt = conn.execute(
+                                        cursor = conn.cursor()
+                                        cursor.execute(
                                             "SELECT id FROM daily_transit WHERE transit_date_start = %s AND trip = 'Trip D'",
                                             (o_date,)
-                                        ).fetchone()
+                                        )
+                                        existing_dt = cursor.fetchone()
                                         
                                         if not existing_dt:
-                                            conn.execute('''
+                                            cursor.execute('''
                                                 INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                             ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
@@ -1350,7 +1266,8 @@ elif nav_selection == "⏰ Overtime & Transport":
                             if st.button("🗑️ Remove", key=f"del_ot_{o_id}", type="primary"):
                                 try:
                                     conn = get_db_connection()
-                                    conn.execute("DELETE FROM overtime_requests WHERE id = %s", (o_id,))
+                                    cursor = conn.cursor()
+                                    cursor.execute("DELETE FROM overtime_requests WHERE id = %s", (o_id,))
                                     conn.commit()
                                     conn.close()
                                     set_transaction_dialog("Deletion Successful", f"Removed overtime record #{o_id}.", "success")
@@ -1387,7 +1304,8 @@ elif nav_selection == "👥 Transit Groups & Passengers":
             else:
                 try:
                     conn = get_db_connection()
-                    conn.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (%s, %s, %s, %s)", (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO transit_groups (group_name, driver_name, etd_1, etd_2) VALUES (%s, %s, %s, %s)", (selected_car_group, selected_driver, etd1_grp_formatted, etd2_grp_formatted))
                     conn.commit()
                     conn.close()
                     set_transaction_dialog("Data Transaction Successful", f"Group '{selected_car_group}' created.", "success")
@@ -1404,8 +1322,9 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                 if selected_passengers:
                     try:
                         conn = get_db_connection()
+                        cursor = conn.cursor()
                         for p in selected_passengers:
-                            conn.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (%s, %s)", (selected_group_for_p, p))
+                            cursor.execute("INSERT INTO transit_passengers (group_name, passengers) VALUES (%s, %s)", (selected_group_for_p, p))
                         conn.commit()
                         conn.close()
                         set_transaction_dialog("Data Transaction Successful", "Passengers assigned.", "success")
@@ -1452,7 +1371,8 @@ elif nav_selection == "👥 Transit Groups & Passengers":
                         if st.button("🗑️ Remove", key=f"del_passenger_{p_id}", type="primary"):
                             try:
                                 conn = get_db_connection()
-                                conn.execute("DELETE FROM transit_passengers WHERE id = %s", (p_id,))
+                                cursor = conn.cursor()
+                                cursor.execute("DELETE FROM transit_passengers WHERE id = %s", (p_id,))
                                 conn.commit()
                                 conn.close()
                                 set_transaction_dialog("Deletion Successful", f"Passenger assignment #{p_id} removed.", "success")
@@ -1513,7 +1433,8 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
             else:
                 try:
                     conn = get_db_connection()
-                    conn.execute('''
+                    cursor = conn.cursor()
+                    cursor.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), group_name, st.session_state.username, etd1_fmt, etd2_fmt, loc_from, loc_to, daily_repeat, trip_type))
@@ -1546,7 +1467,8 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
                         if st.button("🗑️ Remove", key=f"del_transit_{tr_id}", type="primary"):
                             try:
                                 conn = get_db_connection()
-                                conn.execute("DELETE FROM daily_transit WHERE id = %s", (tr_id,))
+                                cursor = conn.cursor()
+                                cursor.execute("DELETE FROM daily_transit WHERE id = %s", (tr_id,))
                                 conn.commit()
                                 conn.close()
                                 set_transaction_dialog("Deletion Successful", f"Removed transit dispatch #{tr_id}.", "success")
@@ -1584,7 +1506,8 @@ elif nav_selection == "🏢 Meeting Rooms":
         if submitted_booking:
             try:
                 conn = get_db_connection()
-                conn.execute('''
+                cursor = conn.cursor()
+                cursor.execute('''
                     INSERT INTO room_bookings (room_number, booked_by, booking_date, start_time, end_time, is_recurring, recurrence_end_date)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ''', (selected_room, st.session_state.username, booking_date.strftime("%Y-%m-%d"), start_t.strftime("%H:%M"), end_t.strftime("%H:%M"), is_recurring, rec_end_date.strftime("%Y-%m-%d") if is_recurring == "Yes" else ""))
@@ -1616,7 +1539,8 @@ elif nav_selection == "🏢 Meeting Rooms":
                         if st.button("🗑️ Remove", key=f"del_booking_{b_id}", type="primary"):
                             try:
                                 conn = get_db_connection()
-                                conn.execute("DELETE FROM room_bookings WHERE id = %s", (b_id,))
+                                cursor = conn.cursor()
+                                cursor.execute("DELETE FROM room_bookings WHERE id = %s", (b_id,))
                                 conn.commit()
                                 conn.close()
                                 set_transaction_dialog("Deletion Successful", f"Removed booking #{b_id}.", "success")
@@ -1644,7 +1568,8 @@ elif nav_selection == "📢 Site News":
                             f.write(uploaded_file.getbuffer())
                         
                         conn = get_db_connection()
-                        conn.execute('''
+                        cursor = conn.cursor()
+                        cursor.execute('''
                             INSERT INTO site_news (title, filename, file_path, file_type, uploaded_by, upload_date)
                             VALUES (%s, %s, %s, %s, %s, %s)
                         ''', (news_title, uploaded_file.name, file_path, uploaded_file.type, st.session_state.username, datetime.today().strftime("%Y-%m-%d")))
@@ -1675,7 +1600,8 @@ elif nav_selection == "📢 Site News":
                             if os.path.exists(n_fpath):
                                 os.remove(n_fpath)
                             conn = get_db_connection()
-                            conn.execute("DELETE FROM site_news WHERE id = %s", (n_id,))
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM site_news WHERE id = %s", (n_id,))
                             conn.commit()
                             conn.close()
                             set_transaction_dialog("Deletion Successful", "Announcement removed.", "success")
@@ -1696,12 +1622,12 @@ elif nav_selection == "🛠️ System Administration":
         tab_backup, tab_import, tab_master = st.tabs(["💾 Backup & Recovery", "📥 Excel Template & Smart Import", "⚙ Master Tables Editor"])
         
         with tab_backup:
-            st.subheader("Supabase Database Backup & Export")
-            st.markdown("Export all Supabase database tables to Excel.")
-            if st.button("Export Supabase Database Backup Now", type="primary"):
+            st.subheader("Database Backup & Export")
+            st.markdown("Create a manual timestamped Excel backup export of all PostgreSQL tables.")
+            if st.button("Perform Manual Backup Now", type="primary"):
                 success, db_path, excel_path = perform_manual_backup()
                 if success:
-                    set_transaction_dialog("Backup Successful", f"Excel backup exported to: {excel_path}", "success")
+                    set_transaction_dialog("Backup Successful", f"Excel export saved to: {excel_path}", "success")
                 else:
                     set_transaction_dialog("Backup Failed", f"Error: {db_path}", "error")
                 st.rerun()
@@ -1728,6 +1654,7 @@ elif nav_selection == "🛠️ System Administration":
                 """
             )
             
+            # 1. GENERATE & DOWNLOAD TEMPLATE
             conn = get_db_connection()
             table_names = [
                 "users", "holidays", "trips", "overtime_requests", "meeting_rooms", 
@@ -1758,7 +1685,7 @@ elif nav_selection == "🛠️ System Administration":
             uploaded_import_file = st.file_uploader("Upload Completed Excel Master Template", type=["xlsx", "xls"])
             
             if uploaded_import_file is not None:
-                if st.button("🚀 Process Smart Import & Update Supabase", type="primary"):
+                if st.button("🚀 Process Smart Import & Update Database", type="primary"):
                     try:
                         excel_file_obj = pd.ExcelFile(uploaded_import_file)
                         conn = get_db_connection()
@@ -1799,43 +1726,35 @@ elif nav_selection == "🛠️ System Administration":
                                     cols = list(clean_row.index)
                                     vals = list(clean_row.values)
                                     
-                                    exists = False
-                                    if pk_col and pk_col in cols and sheet_name not in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
-                                        pk_val = clean_row[pk_col]
-                                        cursor.execute(f"SELECT COUNT(*) FROM {sheet_name} WHERE {pk_col} = %s", (pk_val,))
-                                        res = cursor.fetchone()
-                                        if res and (res['count'] if isinstance(res, dict) else res[0]) > 0:
-                                            exists = True
+                                    insert_cols = cols
+                                    insert_vals = vals
+                                    if pk_col in cols and sheet_name in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
+                                        if pd.isna(clean_row[pk_col]) or str(clean_row[pk_col]).strip() == "":
+                                            insert_cols = [c for c in cols if c != pk_col]
+                                            insert_vals = [clean_row[c] for c in insert_cols]
                                             
-                                    if exists and pk_col:
-                                        set_cols = [c for c in cols if c != pk_col]
-                                        set_clause = ", ".join([f"{c} = %s" for c in set_cols])
-                                        update_vals = [clean_row[c] for c in set_cols] + [clean_row[pk_col]]
-                                        if set_clause:
-                                            sql = f"UPDATE {sheet_name} SET {set_clause} WHERE {pk_col} = %s"
-                                            cursor.execute(sql, update_vals)
-                                            updated_count += 1
+                                    placeholders = ", ".join(["%s"] * len(insert_cols))
+                                    col_names_str = ", ".join(insert_cols)
+                                    
+                                    if pk_col and pk_col in insert_cols:
+                                        update_set_clause = ", ".join([f"{c} = EXCLUDED.{c}" for c in insert_cols if c != pk_col])
+                                        if update_set_clause:
+                                            sql = f"INSERT INTO {sheet_name} ({col_names_str}) VALUES ({placeholders}) ON CONFLICT ({pk_col}) DO UPDATE SET {update_set_clause}"
+                                        else:
+                                            sql = f"INSERT INTO {sheet_name} ({col_names_str}) VALUES ({placeholders}) ON CONFLICT ({pk_col}) DO NOTHING"
                                     else:
-                                        insert_cols = cols
-                                        insert_vals = vals
-                                        if pk_col in cols and sheet_name in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
-                                            if pd.isna(clean_row[pk_col]) or str(clean_row[pk_col]).strip() == "":
-                                                insert_cols = [c for c in cols if c != pk_col]
-                                                insert_vals = [clean_row[c] for c in insert_cols]
-                                                
-                                        placeholders = ", ".join(["%s"] * len(insert_cols))
-                                        col_names_str = ", ".join(insert_cols)
                                         sql = f"INSERT INTO {sheet_name} ({col_names_str}) VALUES ({placeholders})"
-                                        cursor.execute(sql, insert_vals)
-                                        inserted_count += 1
                                         
-                                import_summary_log.append(f"Table **{sheet_name}**: Inserted {inserted_count}, Updated {updated_count}")
+                                    cursor.execute(sql, insert_vals)
+                                    inserted_count += 1
+                                    
+                                import_summary_log.append(f"Table **{sheet_name}**: Processed {inserted_count} records")
                                 
                         conn.commit()
                         conn.close()
                         
                         summary_msg = "\n".join(import_summary_log)
-                        set_transaction_dialog("Smart Import Successful", f"Supabase updated successfully!\n\n{summary_msg}", "success")
+                        set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n{summary_msg}", "success")
                     except Exception as e:
                         set_transaction_dialog("Import Failed", f"Error during import processing: {str(e)}", "error")
                     st.rerun()
@@ -1865,9 +1784,14 @@ elif nav_selection == "🛠️ System Administration":
 
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute(f"PRAGMA table_info({selected_master_table})")
-            table_info = cursor.fetchall()
-            pk_cols = [col['name'] if isinstance(col, dict) else col[1] for col in table_info if (col.get('pk', 0) if isinstance(col, dict) else col[5]) > 0]
+            cursor.execute("""
+                SELECT kcu.column_name 
+                FROM information_schema.table_constraints tc 
+                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name 
+                WHERE tc.table_name = %s AND tc.constraint_type = 'PRIMARY KEY'
+            """, (selected_master_table,))
+            pk_rows = cursor.fetchall()
+            pk_cols = [row[0] for row in pk_rows]
             if not pk_cols:
                 pk_cols = [master_df.columns[0] if not master_df.empty else '']
             pk_col = pk_cols[0] if pk_cols else None
@@ -1886,7 +1810,7 @@ elif nav_selection == "🛠️ System Administration":
                     cursor = conn.cursor()
                     
                     if pk_col and pk_col in edited_df.columns and pk_col in master_df.columns:
-                        original_keys = set(master_df[pk_col].astype(str))
+                        original_keys = set(master_df[pk_col].dropna().astype(str))
                         current_keys = set(edited_df[pk_col].dropna().astype(str))
                         
                         deleted_keys = original_keys - current_keys
@@ -1912,7 +1836,12 @@ elif nav_selection == "🛠️ System Administration":
                                 placeholders = ", ".join(["%s"] * len(insert_cols))
                                 col_names_str = ", ".join(insert_cols)
                                 if insert_cols:
-                                    cursor.execute(f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})", insert_vals)
+                                    if pk_col and pk_col in insert_cols:
+                                        update_set_clause = ", ".join([f"{c} = EXCLUDED.{c}" for c in insert_cols if c != pk_col])
+                                        sql = f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders}) ON CONFLICT ({pk_col}) DO UPDATE SET {update_set_clause}"
+                                    else:
+                                        sql = f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})"
+                                    cursor.execute(sql, insert_vals)
                     else:
                         cursor.execute(f"DELETE FROM {selected_master_table}")
                         for _, row in edited_df.iterrows():
