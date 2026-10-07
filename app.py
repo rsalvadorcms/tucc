@@ -1203,7 +1203,7 @@ elif nav_selection == "⏰ Overtime & Transport":
             
         conn = get_db_connection()
         placeholders = ','.join(['%s'] * len(target_export_dates))
-        summary_query = f"SELECT emp_name AS "Employee Name", ot_date AS "Date", start_time AS "Start Time", end_time AS "End Time", needs_transport AS "Needs Transport", origin AS "Origin", destination AS "Destination" FROM overtime_requests WHERE ot_date IN ({placeholders})"
+        summary_query = f"SELECT emp_name AS Employee_Name, ot_date AS Date, start_time AS Start_Time, end_time AS End_Time, needs_transport AS Needs_Transport, origin AS Origin, destination AS Destination FROM overtime_requests WHERE ot_date IN ({placeholders})"
         curr_next_ot_df = pd.read_sql_query(summary_query, conn, params=target_export_dates)
         conn.close()
         
