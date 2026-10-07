@@ -689,7 +689,9 @@ if not st.session_state.logged_in:
         
         if submitted:
             conn = get_db_connection()
-            user = conn.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password)).fetchone()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE username=%s AND password=%s", (username, password))
+                user = cur.fetchone()
             conn.close()
             if user:
                 st.session_state.logged_in = True
