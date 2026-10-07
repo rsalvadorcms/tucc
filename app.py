@@ -56,28 +56,6 @@ def get_db_connection():
         )
     return conn
 
-def fetch_all_as_dict(cursor):
-    """Safely fetches all rows as dictionaries, handling both DictCursor rows and standard tuples."""
-    rows = cursor.fetchall()
-    if not rows:
-        return []
-    # If rows are already dictionary-like (DictCursor)
-    if isinstance(rows[0], dict) or hasattr(rows[0], 'keys'):
-        return [dict(r) for r in rows]
-    # Fallback: map tuple values using column names from cursor description
-    columns = [col[0] for col in cursor.description]
-    return [dict(zip(columns, row)) for row in rows]
-
-def fetch_one_as_dict(cursor):
-    """Safely fetches a single row as a dictionary."""
-    row = cursor.fetchone()
-    if not row:
-        return None
-    if isinstance(row, dict) or hasattr(row, 'keys'):
-        return dict(row)
-    columns = [col[0] for col in cursor.description]
-    return dict(zip(columns, row))
-
 @st.dialog("Data Transaction Status")
 def show_transaction_dialog(title_text: str, message_text: str, status_type: str = "success"):
     """Displays transaction outcome in a pop-up modal message box."""
