@@ -615,6 +615,14 @@ def init_db():
         )
     ''')
     
+    # Create database indexes for faster data fetching and query performance
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_overtime_date ON overtime_requests(ot_date);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_overtime_username ON overtime_requests(username);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_daily_transit_dates ON daily_transit(transit_date_start, transit_date_end);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_daily_transit_trip ON daily_transit(trip);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_room_bookings_date ON room_bookings(booking_date);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_transit_passengers_group ON transit_passengers(group_name);')
+
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO users VALUES (%s, %s, %s, %s, %s)", ('owner', 'owner123', 'Owner', 'owner@company.com', 'System Owner'))
@@ -1285,10 +1293,15 @@ elif nav_selection == "⏰ Overtime & Transport":
 elif nav_selection == "👥 Transit Groups & Passengers":
     st.header("👥 Transit Groups & Passengers Management")
     conn = get_db_connection()
-    drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
-    cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
-    employees_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
-    groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+    with conn.cursor() as cur:
+        cur.execute("SELECT driver_name FROM fleet_drivers")
+        drivers_list = [d['driver_name'] for d in cur.fetchall()]
+        cur.execute("SELECT car_name FROM cars")
+        cars_list = [c['car_name'] for c in cur.fetchall()]
+        cur.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''")
+        employees_list = [u['emp_name'] for u in cur.fetchall()]
+        cur.execute("SELECT group_name FROM transit_groups")
+        groups_list = [g['group_name'] for g in cur.fetchall()]
     conn.close()
 
     col1, col2 = st.columns(2)
@@ -1413,8 +1426,11 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
             end_date = st.date_input("End Date", value=date.today())
             
             conn = get_db_connection()
-            car_names = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
-            trip_options = [t['trip'] for t in conn.execute("SELECT trip FROM trips").fetchall()]
+            with conn.cursor() as cur:
+                cur.execute("SELECT car_name FROM cars")
+                car_names = [c['car_name'] for c in cur.fetchall()]
+                cur.execute("SELECT trip FROM trips")
+                trip_options = [t['trip'] for t in cur.fetchall()]
             conn.close()
             
             group_name = st.selectbox("Assign Car / Group", options=car_names if car_names else ["TBA"])
@@ -1494,7 +1510,9 @@ elif nav_selection == "🏢 Meeting Rooms":
     st.subheader("Book a Meeting Room")
     with st.form("room_booking_form"):
         conn = get_db_connection()
-        r_nums = [r['room_number'] for r in conn.execute("SELECT room_number FROM meeting_rooms").fetchall()]
+        with conn.cursor() as cur:
+            cur.execute("SELECT room_number FROM meeting_rooms")
+            r_nums = [r['room_number'] for r in cur.fetchall()]
         conn.close()
         
         selected_room = st.selectbox("Select Room Number", options=r_nums if r_nums else ["101"])
