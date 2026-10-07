@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import sqlalchemy
 import psycopg2
 import psycopg2.extras
 import io
@@ -41,38 +40,21 @@ if not os.path.exists(NEWS_DIR):
     os.makedirs(NEWS_DIR)
 
 # ==============================================================================
-# ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE (SQLALCHEMY & CACHING)
+# ⚙ 1. HELPER FUNCTIONS & POSTGRESQL DATABASE ENGINE
 # ==============================================================================
-@st.cache_resource
-def get_db_engine():
-    """Creates and caches a SQLAlchemy engine connected to Supabase PostgreSQL."""
-    if "postgres" in st.secrets:
-        cfg = st.secrets["postgres"]
-        conn_str = f"postgresql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['dbname']}"
-    else:
-        db = os.environ.get("PG_DATABASE", "postgres")
-        user = os.environ.get("PG_USER", "postgres")
-        pwd = os.environ.get("PG_PASSWORD", "password")
-        host = os.environ.get("PG_HOST", "localhost")
-        port = os.environ.get("PG_PORT", "5432")
-        conn_str = f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
-    return sqlalchemy.create_engine(conn_str, pool_pre_ping=True)
-
 def get_db_connection():
-    """Retains raw psycopg2 connection for administrative DDL/cursor executions."""
-    engine = get_db_engine()
-    return engine.raw_connection()
-
-@st.cache_data(ttl=30)
-def load_data_query(query: str, params=None):
-    """High-performance cached data fetcher to eliminate UI lag."""
-    engine = get_db_engine()
-    with engine.connect() as conn:
-        return pd.read_sql(sql=query, con=conn, params=params)
-
-def clear_data_cache():
-    """Clears Streamlit data cache after any Create/Update/Delete transaction."""
-    st.cache_data.clear()
+    if "postgres" in st.secrets:
+        conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
+    else:
+        conn = psycopg2.connect(
+            dbname=os.environ.get("PG_DATABASE", "postgres"),
+            user=os.environ.get("PG_USER", "postgres"),
+            password=os.environ.get("PG_PASSWORD", "password"),
+            host=os.environ.get("PG_HOST", "localhost"),
+            port=os.environ.get("PG_PORT", "5432"),
+            cursor_factory=psycopg2.extras.DictCursor
+        )
+    return conn
 
 @st.dialog("Data Transaction Status")
 def show_transaction_dialog(title_text: str, message_text: str, status_type: str = "success"):
@@ -87,12 +69,16 @@ def show_transaction_dialog(title_text: str, message_text: str, status_type: str
     st.write(message_text)
     
     if st.button("OK", type="primary", use_container_width=True):
-        for key in ['tx_dialog_title', 'tx_dialog_msg', 'tx_dialog_type']:
-            if key in st.session_state:
-                del st.session_state[key]
+        if 'tx_dialog_title' in st.session_state:
+            del st.session_state['tx_dialog_title']
+        if 'tx_dialog_msg' in st.session_state:
+            del st.session_state['tx_dialog_msg']
+        if 'tx_dialog_type' in st.session_state:
+            del st.session_state['tx_dialog_type']
         st.rerun()
 
 def trigger_transaction_dialog():
+    """Renders the modal popup box if status data exists in session state."""
     if 'tx_dialog_title' in st.session_state and st.session_state.tx_dialog_title:
         show_transaction_dialog(
             st.session_state.tx_dialog_title,
@@ -101,28 +87,35 @@ def trigger_transaction_dialog():
         )
 
 def set_transaction_dialog(title: str, message: str, status_type: str = "success"):
+    """Stores dialog notification parameters into session state."""
     st.session_state.tx_dialog_title = title
     st.session_state.tx_dialog_msg = message
     st.session_state.tx_dialog_type = status_type
-    clear_data_cache()
 
 def perform_manual_backup():
     """Creates a timestamped manual backup export of ALL database tables to Excel."""
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
+        
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
     try:
-        engine = get_db_engine()
+        conn = get_db_connection()
         backup_excel_path = os.path.join(BACKUP_DIR, f"backup_data_{timestamp}.xlsx")
-        tables = [
-            "daily_transit", "overtime_requests", "room_bookings", "users", 
-            "cars", "trips", "site_news", "transit_passengers", "holidays", 
-            "meeting_rooms", "fleet_drivers", "transit_groups"
-        ]
         with pd.ExcelWriter(backup_excel_path, engine='openpyxl') as writer:
-            with engine.connect() as conn:
-                for t in tables:
-                    pd.read_sql_query(f"SELECT * FROM {t}", conn).to_excel(writer, index=False, sheet_name=t)
+            pd.read_sql_query("SELECT * FROM daily_transit", conn).to_excel(writer, index=False, sheet_name="daily_transit")
+            pd.read_sql_query("SELECT * FROM overtime_requests", conn).to_excel(writer, index=False, sheet_name="overtime_requests")
+            pd.read_sql_query("SELECT * FROM room_bookings", conn).to_excel(writer, index=False, sheet_name="room_bookings")
+            pd.read_sql_query("SELECT * FROM users", conn).to_excel(writer, index=False, sheet_name="users")
+            pd.read_sql_query("SELECT * FROM cars", conn).to_excel(writer, index=False, sheet_name="cars")
+            pd.read_sql_query("SELECT * FROM trips", conn).to_excel(writer, index=False, sheet_name="trips")
+            pd.read_sql_query("SELECT * FROM site_news", conn).to_excel(writer, index=False, sheet_name="site_news")
+            pd.read_sql_query("SELECT * FROM transit_passengers", conn).to_excel(writer, index=False, sheet_name="transit_passengers")
+            pd.read_sql_query("SELECT * FROM holidays", conn).to_excel(writer, index=False, sheet_name="holidays")
+            pd.read_sql_query("SELECT * FROM meeting_rooms", conn).to_excel(writer, index=False, sheet_name="meeting_rooms")
+            pd.read_sql_query("SELECT * FROM fleet_drivers", conn).to_excel(writer, index=False, sheet_name="fleet_drivers")
+            pd.read_sql_query("SELECT * FROM transit_groups", conn).to_excel(writer, index=False, sheet_name="transit_groups")
+        conn.close()
         return True, "PostgreSQL Backup Export", backup_excel_path
     except Exception as e:
         return False, str(e), ""
@@ -478,16 +471,21 @@ def export_shuttle_timetable_excel(df, effective_date_str=""):
 
     ws.merge_cells("A5:A6")
     ws["A5"] = "Days (s)"
+    
     ws.merge_cells("B5:B6")
     ws["B5"] = "UNIT"
+    
     ws.merge_cells("C5:C6")
     ws["C5"] = "DRIVER"
+    
     ws.merge_cells("D5:D6")
     ws["D5"] = "TRIP NO."
+
     ws.merge_cells("E5:F5")
     ws["E5"] = "ROUTE"
     ws["E6"] = "YARD - 1"
     ws["F6"] = "YARD - 3"
+
     ws.merge_cells("G5:G6")
     ws["G5"] = "REMARKS"
 
@@ -697,22 +695,66 @@ if not st.session_state.logged_in:
             conn.close()
             if user:
                 st.session_state.logged_in = True
-                st.session_state.username = user[0] # username
-                st.session_state.role = user[2]     # role
-                st.session_state.emp_name = user[4] or user[0] # emp_name
+                st.session_state.username = user['username']
+                st.session_state.role = user['role']
+                st.session_state.emp_name = user['emp_name'] or user['username']
                 st.rerun()
             else:
                 st.error("Invalid username or password configuration.")
     st.stop()
 
 # ==============================================================================
-# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION
+# 🗂️ 3. MAIN APP CONTROL PANELS & SIDEBAR NAVIGATION (Mobile Optimized & Left-Aligned)
 # ==============================================================================
 st.sidebar.title(f"👋 Welcome, {st.session_state.emp_name}")
 st.sidebar.info(f"Access Level: **{st.session_state.role}**")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📌 Navigation")
+
+st.sidebar.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] button {
+        display: flex !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
+        width: 100% !important;
+        padding-top: 10px !important;
+        padding-bottom: 10px !important;
+    }
+    [data-testid="stSidebar"] button p, 
+    [data-testid="stSidebar"] button div,
+    [data-testid="stSidebar"] button span {
+        text-align: left !important;
+        justify-content: flex-start !important;
+        width: 100% !important;
+    }
+
+    @media (max-width: 768px) {
+        .freeze-pane-container {
+            max-height: 450px !important;
+        }
+        h1 {
+            font-size: 1.4rem !important;
+        }
+        h2 {
+            font-size: 1.2rem !important;
+        }
+        h3 {
+            font-size: 1.05rem !important;
+        }
+        .stButton button {
+            width: 100% !important;
+            margin-bottom: 4px !important;
+            font-size: 14px !important;
+            padding: 8px 12px !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 nav_options = [
     "🏠 Daily Transportation Arrangement",
@@ -730,6 +772,7 @@ if 'nav_selection' not in st.session_state:
 
 for opt in nav_options:
     is_active = (st.session_state.nav_selection == opt)
+    
     if is_active:
         st.sidebar.markdown(
             f"""
@@ -748,14 +791,57 @@ nav_selection = st.session_state.nav_selection
 
 st.sidebar.markdown("---")
 if st.sidebar.button("Logout Profile"):
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
+    st.session_state.emp_name = ""
     st.rerun()
 
 # --- VIEW RENDERERS BASED ON SIDEBAR NAVIGATION ---
 
 # 1. DAILY TRANSPORTATION ARRANGEMENT
 if nav_selection == "🏠 Daily Transportation Arrangement":
+    st.markdown(
+        """
+        <style>
+        .freeze-pane-container {
+            max-height: 700px;
+            overflow-y: auto;
+            border: 1px solid #BFBFBF;
+            border-radius: 5px;
+            background-color: white;
+            padding: 10px;
+        }
+        .freeze-pane-container table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            color: black;
+            font-family: Calibri, sans-serif;
+            font-size: 14px;
+        }
+        .freeze-pane-container th {
+            position: sticky;
+            top: 0;
+            background-color: #1F4E78;
+            color: white;
+            text-align: center;
+            border: 1px solid #BFBFBF;
+            padding: 10px;
+            z-index: 5;
+        }
+        .freeze-pane-container td {
+            border: 1px solid #BFBFBF;
+            text-align: center;
+            vertical-align: middle;
+            padding: 8px;
+            background-color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
     with h_col1:
         if os.path.exists(LOGO1_PATH):
@@ -777,7 +863,8 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
 
     st.markdown("---")
 
-    home_unrolled_df = load_data_query('''
+    conn = get_db_connection()
+    home_unrolled_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
                tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
@@ -786,15 +873,115 @@ if nav_selection == "🏠 Daily Transportation Arrangement":
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
         ORDER BY tg.group_name
-    ''')
+    ''', conn)
+    conn.close()
 
     if not home_unrolled_df.empty:
-        st.dataframe(home_unrolled_df, use_container_width=True)
+        display_home_df = home_unrolled_df.copy()
+        display_home_df["Vehicle Description"] = display_home_df.apply(
+            lambda r: f"{r['Vehicle Model'] or 'Standard Vehicle'}<br>{r['Plate Number'] or 'N/A'}<br>Color : {r['Color'] or 'Black'}",
+            axis=1
+        )
+        
+        html_table_rows = ""
+        current_group = None
+        group_rowspan_counts = display_home_df['Car Group'].value_counts()
+        
+        rendered_groups = set()
+        for _, row in display_home_df.iterrows():
+            g_name = row['Car Group']
+            v_desc = row['Vehicle Description']
+            d_name = row['Driver Name'] or ""
+            c_num = row['Contact Number'] or ""
+            p_name = row['Passenger Name'] or ""
+            etd1 = row['ETD 1 (From)'] or ""
+            etd2 = row['ETD 2 (To)'] or ""
+            
+            span_count = group_rowspan_counts.get(g_name, 1)
+            
+            html_table_rows += "<tr>"
+            if g_name != current_group:
+                current_group = g_name
+                rendered_groups.clear()
+                html_table_rows += f"<td rowspan='{span_count}'><b>{g_name}</b><br><span style='font-size:11px;'>{v_desc}</span></td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{d_name}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{c_num}</td>"
+            
+            html_table_rows += f"<td>{p_name}</td>"
+            
+            if g_name not in rendered_groups:
+                rendered_groups.add(g_name)
+                html_table_rows += f"<td rowspan='{span_count}'>{etd1}</td>"
+                html_table_rows += f"<td rowspan='{span_count}'>{etd2}</td>"
+            
+            html_table_rows += "</tr>"
+
+        freeze_pane_html = f"""
+        <div class="freeze-pane-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Vehicle Description</th>
+                        <th>Driver Name</th>
+                        <th>Contact Number</th>
+                        <th>Passenger</th>
+                        <th>ETD 1</th>
+                        <th>ETD 2</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {html_table_rows}
+                </tbody>
+            </table>
+        </div>
+        """
+        st.markdown(freeze_pane_html, unsafe_allow_html=True)
     else:
         st.info("No transit groups or passenger assignments configured yet. Go to 'Transit Groups & Passengers' in the navigation menu.")
 
 # 2. SHUTTLE TIMETABLE
 elif nav_selection == "📅 Shuttle Timetable":
+    st.markdown(
+        """
+        <style>
+        .freeze-pane-container {
+            max-height: 700px;
+            overflow-y: auto;
+            border: 1px solid #BFBFBF;
+            border-radius: 5px;
+            background-color: white;
+            padding: 10px;
+        }
+        .freeze-pane-container table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            color: black;
+            font-family: Calibri, sans-serif;
+            font-size: 14px;
+        }
+        .freeze-pane-container th {
+            position: sticky;
+            top: 0;
+            background-color: #1F4E78;
+            color: white;
+            text-align: center;
+            border: 1px solid #BFBFBF;
+            padding: 10px;
+            z-index: 5;
+        }
+        .freeze-pane-container td {
+            border: 1px solid #BFBFBF;
+            text-align: center;
+            vertical-align: middle;
+            padding: 8px;
+            background-color: white;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     h_col1, h_col2, h_col3 = st.columns([1, 4, 1])
     with h_col1:
         if os.path.exists(LOGO1_PATH):
@@ -815,7 +1002,8 @@ elif nav_selection == "📅 Shuttle Timetable":
 
     st.markdown("---")
 
-    shuttle_raw_df = load_data_query('''
+    conn = get_db_connection()
+    shuttle_raw_df = pd.read_sql_query('''
         SELECT dt.id, dt.transit_date_start, dt.transit_date_end, 
                dt.trip AS trip_code,
                dt.requested_by, dt.group_name, c.plate_number, c.vehicle, 
@@ -826,17 +1014,67 @@ elif nav_selection == "📅 Shuttle Timetable":
         LEFT JOIN transit_groups tg ON dt.group_name = tg.group_name
         WHERE dt.trip IN ('Trip A', 'Trip B', 'Trip C')
         ORDER BY dt.etd_1 ASC, dt.id DESC
-    ''')
+    ''', conn)
+    conn.close()
 
     if not shuttle_raw_df.empty:
         shuttle_display_df = shuttle_raw_df.copy()
-        shuttle_display_df['Days'] = "MONDAY - SATURDAY"
+        shuttle_display_df['Days'] = "MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY"
         shuttle_display_df['Unit'] = shuttle_display_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
         shuttle_display_df['Driver'] = shuttle_display_df['driver_name'].fillna("TBA")
+        shuttle_display_df['Trip No.'] = [f"{i}st" if i==1 else f"{i}nd" if i==2 else f"{i}rd" if i==3 else f"{i}th" for i in range(1, len(shuttle_display_df)+1)]
         shuttle_display_df['Route (Yard-1)'] = shuttle_display_df['etd_1']
         shuttle_display_df['Route (Yard-3)'] = shuttle_display_df['etd_2']
+        shuttle_display_df['Remarks'] = "DROP-OFF / PICK-UP"
+
+        shuttle_rows_html = ""
+        total_rows_count = len(shuttle_display_df)
         
-        st.dataframe(shuttle_display_df[['Days', 'Unit', 'Driver', 'Route (Yard-1)', 'Route (Yard-3)']], use_container_width=True)
+        for idx, row in shuttle_display_df.iterrows():
+            u_val = row['Unit']
+            d_val = row['Driver']
+            t_no = row['Trip No.']
+            r_y1 = row['Route (Yard-1)']
+            r_y3 = row['Route (Yard-3)']
+            rem = row['Remarks']
+            
+            shuttle_rows_html += "<tr>"
+            if idx == 0:
+                shuttle_rows_html += f"<td rowspan='{total_rows_count}' style='font-weight: bold;'>MONDAY<br>TUESDAY<br>WEDNESDAY<br>THURSDAY<br>FRIDAY<br>SATURDAY</td>"
+            
+            shuttle_rows_html += f"<td>{u_val}</td>"
+            shuttle_rows_html += f"<td>{d_val}</td>"
+            shuttle_rows_html += f"<td>{t_no}</td>"
+            shuttle_rows_html += f"<td>{r_y1}</td>"
+            shuttle_rows_html += f"<td>{r_y3}</td>"
+            shuttle_rows_html += f"<td>{rem}</td>"
+            shuttle_rows_html += "</tr>"
+
+        full_shuttle_html = f"""
+        <div class="freeze-pane-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="top: 0; z-index: 6;">Days (s)</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">UNIT</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">DRIVER</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">TRIP NO.</th>
+                        <th colspan="2" style="top: 0; z-index: 6;">ROUTE</th>
+                        <th rowspan="2" style="top: 0; z-index: 6;">REMARKS</th>
+                    </tr>
+                    <tr>
+                        <th style="top: 41px; background-color: #245888; z-index: 5;">YARD - 1</th>
+                        <th style="top: 41px; background-color: #245888; z-index: 5;">YARD - 3</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {shuttle_rows_html}
+                </tbody>
+            </table>
+        </div>
+        """
+        st.markdown(full_shuttle_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
         shuttle_excel_df = shuttle_raw_df.copy()
         shuttle_excel_df['Unit'] = shuttle_excel_df.apply(lambda r: f"{r['vehicle']} - {r['plate_number']}" if pd.notna(r['plate_number']) and r['plate_number'] != 'TBA' else "TOYOTA HI-ACE", axis=1)
@@ -857,12 +1095,10 @@ elif nav_selection == "📅 Shuttle Timetable":
 # 3. OVERTIME & TRANSPORT
 elif nav_selection == "⏰ Overtime & Transport":
     st.header("Request Overtime & Logistics Tracking")
-    
-    holiday_df = load_data_query("SELECT holiday_date FROM holidays")
-    holiday_list = holiday_df['holiday_date'].tolist() if not holiday_df.empty else []
-    
-    emp_df = load_data_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''")
-    all_emp_names = emp_df['emp_name'].tolist() if not emp_df.empty else []
+    conn = get_db_connection()
+    holiday_list = pd.read_sql_query("SELECT holiday_date FROM holidays", conn)['holiday_date'].tolist()
+    all_emp_names = pd.read_sql_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''", conn)['emp_name'].tolist()
+    conn.close()
     
     current_user_emp = st.session_state.get("emp_name", "") or st.session_state.get("username", "")
     if not all_emp_names:
@@ -926,7 +1162,9 @@ elif nav_selection == "⏰ Overtime & Transport":
                     "SELECT id FROM daily_transit WHERE transit_date_start = %s AND transit_date_end = %s AND trip = 'Trip D'", 
                     (date_str, date_str)
                 )
-                if not cursor.fetchone():
+                existing_dispatch = cursor.fetchone()
+                
+                if not existing_dispatch:
                     cursor.execute('''
                         INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -934,28 +1172,32 @@ elif nav_selection == "⏰ Overtime & Transport":
                 
                 conn.commit()
                 conn.close()
-                set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s).", "success")
+                set_transaction_dialog("Data Transaction Successful", f"Overtime request logged for {len(selected_staff_members)} staff member(s) & transit dispatch schedule created.", "success")
             except Exception as e:
                 set_transaction_dialog("Data Transaction Unsuccessful", f"Failed to save record: {str(e)}", "error")
         st.rerun()
 
     st.subheader("📋 Overtime Submission History Log")
+    conn = get_db_connection()
     if st.session_state.role in ["Admin", "Owner"]:
-        ot_df = load_data_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests")
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests", conn)
     else:
-        ot_df = load_data_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests WHERE username = %s", params=[st.session_state.username])
+        ot_df = pd.read_sql_query("SELECT id, username, emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination', departure_time AS 'Departure Time', return_time AS 'Return Time' FROM overtime_requests WHERE username = %s", conn, params=[st.session_state.username])
+    conn.close()
     
     if not ot_df.empty:
         st.dataframe(ot_df, use_container_width=True)
         
+        st.markdown("##### 📥 Export Current & Next Date Overtime Staff List")
         target_export_dates = [today_date.strftime("%Y-%m-%d")]
         if tomorrow_is_sunday or tomorrow_is_holiday:
             target_export_dates.append(tomorrow_date.strftime("%Y-%m-%d"))
             
-        curr_next_ot_df = load_data_query(
-            "SELECT emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination' FROM overtime_requests WHERE ot_date = ANY(%s)",
-            params=(target_export_dates,)
-        )
+        conn = get_db_connection()
+        placeholders = ','.join(['%s'] * len(target_export_dates))
+        summary_query = f"SELECT emp_name AS 'Employee Name', ot_date AS 'Date', start_time AS 'Start Time', end_time AS 'End Time', needs_transport AS 'Needs Transport', origin AS 'Origin', destination AS 'Destination' FROM overtime_requests WHERE ot_date IN ({placeholders})"
+        curr_next_ot_df = pd.read_sql_query(summary_query, conn, params=target_export_dates)
+        conn.close()
         
         if not curr_next_ot_df.empty:
             exp_col1, exp_col2 = st.columns(2)
@@ -980,8 +1222,14 @@ elif nav_selection == "⏰ Overtime & Transport":
 
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Overtime Submissions"):
-                ot_raw = load_data_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC")
+                conn = get_db_connection()
+                ot_raw = pd.read_sql_query("SELECT id, username, ot_date, emp_name, start_time, end_time, departure_time FROM overtime_requests ORDER BY id DESC", conn)
+                conn.close()
+                
                 if not ot_raw.empty:
+                    today_str = date.today().strftime("%Y-%m-%d")
+                    tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
+                    
                     for _, o_row in ot_raw.iterrows():
                         o_id, o_uname, o_date, o_emp, o_start, o_end, o_dep = o_row['id'], o_row['username'], o_row['ot_date'], o_row['emp_name'], o_row['start_time'], o_row['end_time'], o_row['departure_time']
                         o_col1, o_col2, o_col3, o_col4 = st.columns([3, 2, 1, 1])
@@ -990,6 +1238,33 @@ elif nav_selection == "⏰ Overtime & Transport":
                         with o_col2:
                             st.text(f"Time: {o_start} - {o_end}")
                         with o_col3:
+                            if o_date in [today_str, tomorrow_str]:
+                                if st.button("🚗 Transport", key=f"transport_ot_{o_id}", type="secondary"):
+                                    try:
+                                        conn = get_db_connection()
+                                        cursor = conn.cursor()
+                                        cursor.execute(
+                                            "SELECT id FROM daily_transit WHERE transit_date_start = %s AND trip = 'Trip D'",
+                                            (o_date,)
+                                        )
+                                        existing_dt = cursor.fetchone()
+                                        
+                                        if not existing_dt:
+                                            cursor.execute('''
+                                                INSERT INTO daily_transit (transit_date_start, transit_date_end, group_name, requested_by, etd_1, etd_2, location_from, location_to, daily, trip)
+                                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                            ''', (o_date, o_date, "TBA", o_uname, o_dep if o_dep else "19:00", None, "Yard-1 Office", "Panbil", "No", "Trip D"))
+                                            conn.commit()
+                                            set_transaction_dialog("Transport Request Added", f"Daily transit dispatch (Trip D) created for date {o_date}.", "success")
+                                        else:
+                                            set_transaction_dialog("Already Exists", f"A Trip D transit dispatch for date {o_date} already exists.", "info")
+                                        conn.close()
+                                    except Exception as e:
+                                        set_transaction_dialog("Action Unsuccessful", f"Failed: {str(e)}", "error")
+                                    st.rerun()
+                            else:
+                                st.text("Past date")
+                        with o_col4:
                             if st.button("🗑️ Remove", key=f"del_ot_{o_id}", type="primary"):
                                 try:
                                     conn = get_db_connection()
@@ -1001,20 +1276,20 @@ elif nav_selection == "⏰ Overtime & Transport":
                                 except Exception as e:
                                     set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                                 st.rerun()
+                else:
+                    st.info("No overtime submissions found.")
+
+        st.download_button("📥 Export Overtime Log to Excel (.xlsx)", data=export_df_to_excel(ot_df, sheet_name="Overtime_Requests"), file_name=f"Overtime_Requests_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # 4. TRANSIT GROUPS & PASSENGERS
 elif nav_selection == "👥 Transit Groups & Passengers":
     st.header("👥 Transit Groups & Passengers Management")
-    
-    drivers_df = load_data_query("SELECT driver_name FROM fleet_drivers")
-    cars_df = load_data_query("SELECT car_name FROM cars")
-    employees_df = load_data_query("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''")
-    groups_df = load_data_query("SELECT group_name FROM transit_groups")
-    
-    drivers_list = drivers_df['driver_name'].tolist() if not drivers_df.empty else []
-    cars_list = cars_df['car_name'].tolist() if not cars_df.empty else []
-    employees_list = employees_df['emp_name'].tolist() if not employees_df.empty else []
-    groups_list = groups_df['group_name'].tolist() if not groups_df.empty else []
+    conn = get_db_connection()
+    drivers_list = [d['driver_name'] for d in conn.execute("SELECT driver_name FROM fleet_drivers").fetchall()]
+    cars_list = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
+    employees_list = [u['emp_name'] for u in conn.execute("SELECT emp_name FROM users WHERE emp_name IS NOT NULL AND emp_name != ''").fetchall()]
+    groups_list = [g['group_name'] for g in conn.execute("SELECT group_name FROM transit_groups").fetchall()]
+    conn.close()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1067,7 +1342,8 @@ elif nav_selection == "👥 Transit Groups & Passengers":
         target_effective_date = st.date_input("Target Effective Date", value=date.today(), key="eff_date_picker")
         eff_date_str = target_effective_date.strftime("%Y-%m-%d") if target_effective_date else ""
 
-    unrolled_df = load_data_query('''
+    conn = get_db_connection()
+    unrolled_df = pd.read_sql_query('''
         SELECT tg.group_name AS "Car Group", c.vehicle AS "Vehicle Model", c.plate_number AS "Plate Number", 
                c.color AS "Color", tg.driver_name AS "Driver Name", fd.driver_mobile AS "Contact Number", 
                tg.etd_1 AS "ETD 1 (From)", tg.etd_2 AS "ETD 2 (To)", tp.passengers AS "Passenger Name"
@@ -1076,13 +1352,17 @@ elif nav_selection == "👥 Transit Groups & Passengers":
         LEFT JOIN fleet_drivers fd ON tg.driver_name = fd.driver_name
         LEFT JOIN transit_passengers tp ON tg.group_name = tp.group_name
         ORDER BY tg.group_name
-    ''')
+    ''', conn)
+    conn.close()
     
     if not unrolled_df.empty:
         st.dataframe(unrolled_df, use_container_width=True)
         
         with st.expander("✏️ Manage / Remove Passenger Assignments"):
-            passengers_raw = load_data_query("SELECT id, group_name, passengers FROM transit_passengers")
+            conn = get_db_connection()
+            passengers_raw = pd.read_sql_query("SELECT id, group_name, passengers FROM transit_passengers", conn)
+            conn.close()
+            
             if not passengers_raw.empty:
                 for _, p_row in passengers_raw.iterrows():
                     p_id, p_grp, p_name = p_row['id'], p_row['group_name'], p_row['passengers']
@@ -1126,19 +1406,21 @@ elif nav_selection == "👥 Transit Groups & Passengers":
 elif nav_selection == "📅 Daily Transit Dispatch Setup":
     st.header("📅 Daily Transit Dispatch Schedule Setup")
     
-    cars_df = load_data_query("SELECT car_name FROM cars")
-    trips_df = load_data_query("SELECT trip FROM trips")
-    car_names = cars_df['car_name'].tolist() if not cars_df.empty else ["TBA"]
-    trip_options = trips_df['trip'].tolist() if not trips_df.empty else ["Trip A"]
-
     with st.form("transit_dispatch_form"):
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("Start Date", value=date.today())
             end_date = st.date_input("End Date", value=date.today())
-            group_name = st.selectbox("Assign Car / Group", options=car_names)
-            trip_type = st.selectbox("Trip Schedule Category", options=trip_options)
+            
+            conn = get_db_connection()
+            car_names = [c['car_name'] for c in conn.execute("SELECT car_name FROM cars").fetchall()]
+            trip_options = [t['trip'] for t in conn.execute("SELECT trip FROM trips").fetchall()]
+            conn.close()
+            
+            group_name = st.selectbox("Assign Car / Group", options=car_names if car_names else ["TBA"])
+            trip_type = st.selectbox("Trip Schedule Category", options=trip_options if trip_options else ["Trip A"])
             daily_repeat = st.selectbox("Repeat Daily?", options=["No", "Yes"])
+            
         with col2:
             raw_etd1 = st.text_input("ETD 1 (From) [e.g. 0545 or 05:45]", value="05:45")
             raw_etd2 = st.text_input("ETD 2 (To) [e.g. 1730 or 17:30]", value="17:30")
@@ -1166,13 +1448,18 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
             st.rerun()
 
     st.subheader("📋 Active Daily Transit Dispatches")
-    transit_df = load_data_query("SELECT id, transit_date_start AS 'Start', transit_date_end AS 'End', group_name AS 'Car Group', requested_by AS 'Requested By', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', location_from AS 'From', location_to AS 'To', daily AS 'Daily', trip AS 'Trip' FROM daily_transit ORDER BY id DESC")
+    conn = get_db_connection()
+    transit_df = pd.read_sql_query("SELECT id, transit_date_start AS 'Start', transit_date_end AS 'End', group_name AS 'Car Group', requested_by AS 'Requested By', etd_1 AS 'ETD 1', etd_2 AS 'ETD 2', location_from AS 'From', location_to AS 'To', daily AS 'Daily', trip AS 'Trip' FROM daily_transit ORDER BY id DESC", conn)
+    conn.close()
     
     if not transit_df.empty:
         st.dataframe(transit_df, use_container_width=True)
+        
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Transit Dispatches"):
-                t_raw = load_data_query("SELECT id, transit_date_start, group_name, trip FROM daily_transit ORDER BY id DESC")
+                conn = get_db_connection()
+                t_raw = pd.read_sql_query("SELECT id, transit_date_start, group_name, trip FROM daily_transit ORDER BY id DESC", conn)
+                conn.close()
                 for _, tr_row in t_raw.iterrows():
                     tr_id, tr_date, tr_grp, tr_trip = tr_row['id'], tr_row['transit_date_start'], tr_row['group_name'], tr_row['trip']
                     tc1, tc2 = st.columns([4, 1])
@@ -1191,10 +1478,14 @@ elif nav_selection == "📅 Daily Transit Dispatch Setup":
                                 set_transaction_dialog("Deletion Unsuccessful", f"Failed: {str(e)}", "error")
                             st.rerun()
 
+        st.download_button("📥 Export Daily Transit to Excel (.xlsx)", data=export_df_to_excel(transit_df, sheet_name="Daily_Transit"), file_name=f"Daily_Transit_{datetime.today().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 # 6. MEETING ROOMS
 elif nav_selection == "🏢 Meeting Rooms":
     st.header("🏢 Meeting Room Booking Portal")
-    rooms_df = load_data_query("SELECT room_number AS 'Room Number', room_name AS 'Room Name', capacity AS 'Capacity', location AS 'Location' FROM meeting_rooms")
+    conn = get_db_connection()
+    rooms_df = pd.read_sql_query("SELECT room_number AS 'Room Number', room_name AS 'Room Name', capacity AS 'Capacity', location AS 'Location' FROM meeting_rooms", conn)
+    conn.close()
     
     st.subheader("Available Meeting Rooms")
     st.dataframe(rooms_df, use_container_width=True)
@@ -1202,8 +1493,11 @@ elif nav_selection == "🏢 Meeting Rooms":
     st.markdown("---")
     st.subheader("Book a Meeting Room")
     with st.form("room_booking_form"):
-        r_nums = rooms_df['Room Number'].tolist() if not rooms_df.empty else ["101"]
-        selected_room = st.selectbox("Select Room Number", options=r_nums)
+        conn = get_db_connection()
+        r_nums = [r['room_number'] for r in conn.execute("SELECT room_number FROM meeting_rooms").fetchall()]
+        conn.close()
+        
+        selected_room = st.selectbox("Select Room Number", options=r_nums if r_nums else ["101"])
         booking_date = st.date_input("Booking Date", value=date.today())
         start_t = st.time_input("Start Time", value=time(9, 0))
         end_t = st.time_input("End Time", value=time(10, 0))
@@ -1227,13 +1521,17 @@ elif nav_selection == "🏢 Meeting Rooms":
             st.rerun()
 
     st.subheader("📋 Active Room Bookings")
-    bookings_df = load_data_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring', recurrence_end_date AS 'Recurrence End' FROM room_bookings ORDER BY id DESC")
+    conn = get_db_connection()
+    bookings_df = pd.read_sql_query("SELECT id, room_number AS 'Room', booked_by AS 'Booked By', booking_date AS 'Date', start_time AS 'Start', end_time AS 'End', is_recurring AS 'Recurring', recurrence_end_date AS 'Recurrence End' FROM room_bookings ORDER BY id DESC", conn)
+    conn.close()
     
     if not bookings_df.empty:
         st.dataframe(bookings_df, use_container_width=True)
         if st.session_state.role in ["Admin", "Owner"]:
             with st.expander("✏️ Manage / Remove Room Bookings"):
-                b_raw = load_data_query("SELECT id, room_number, booking_date FROM room_bookings")
+                conn = get_db_connection()
+                b_raw = pd.read_sql_query("SELECT id, room_number, booking_date FROM room_bookings", conn)
+                conn.close()
                 for _, b_row in b_raw.iterrows():
                     b_id, b_room, b_date = b_row['id'], b_row['room_number'], b_row['booking_date']
                     bc1, bc2 = st.columns([4, 1])
@@ -1284,7 +1582,10 @@ elif nav_selection == "📢 Site News":
                         set_transaction_dialog("Publication Unsuccessful", f"Failed: {str(e)}", "error")
                 st.rerun()
 
-    news_df = load_data_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC")
+    conn = get_db_connection()
+    news_df = pd.read_sql_query("SELECT id, title, filename, file_path, uploaded_by, upload_date FROM site_news ORDER BY id DESC", conn)
+    conn.close()
+    
     if not news_df.empty:
         for _, n_row in news_df.iterrows():
             n_id, n_title, n_fname, n_fpath, n_author, n_date = n_row['id'], n_row['title'], n_row['filename'], n_row['file_path'], n_row['uploaded_by'], n_row['upload_date']
@@ -1324,6 +1625,7 @@ elif nav_selection == "🛠️ System Administration":
         
         with tab_backup:
             st.subheader("Database Backup & Export")
+            st.markdown("Create a manual timestamped Excel backup export of all PostgreSQL tables.")
             if st.button("Perform Manual Backup Now", type="primary"):
                 success, db_path, excel_path = perform_manual_backup()
                 if success:
@@ -1346,22 +1648,31 @@ elif nav_selection == "🛠️ System Administration":
 
         with tab_import:
             st.subheader("📥 Excel Template Download & Smart Data Import")
+            st.markdown(
+                """
+                Download the master Excel template containing all database tables as sheets. 
+                Fill or update your data in the respective sheets, and upload it back. 
+                The importer is smart: it matches columns and **automatically appends new rows or updates existing records** based on each table's unique key!
+                """
+            )
+            
+            # 1. GENERATE & DOWNLOAD TEMPLATE
+            conn = get_db_connection()
             table_names = [
                 "users", "holidays", "trips", "overtime_requests", "meeting_rooms", 
                 "room_bookings", "cars", "fleet_drivers", "transit_groups", 
                 "transit_passengers", "daily_transit", "site_news"
             ]
             
-            engine = get_db_engine()
             template_buffer = io.BytesIO()
             with pd.ExcelWriter(template_buffer, engine='openpyxl') as writer:
-                with engine.connect() as conn:
-                    for tname in table_names:
-                        try:
-                            df_tbl = pd.read_sql_query(f"SELECT * FROM {tname} LIMIT 0", conn)
-                        except Exception:
-                            df_tbl = pd.DataFrame()
-                        df_tbl.to_excel(writer, index=False, sheet_name=tname)
+                for tname in table_names:
+                    try:
+                        df_tbl = pd.read_sql_query(f"SELECT * FROM {tname} LIMIT 0", conn)
+                    except Exception:
+                        df_tbl = pd.DataFrame()
+                    df_tbl.to_excel(writer, index=False, sheet_name=tname)
+            conn.close()
             
             st.download_button(
                 "📥 Download Master Excel Import Template (.xlsx)",
@@ -1371,20 +1682,32 @@ elif nav_selection == "🛠️ System Administration":
                 use_container_width=True
             )
             
+            st.markdown("---")
+            st.subheader("Upload & Process Master Excel Import")
             uploaded_import_file = st.file_uploader("Upload Completed Excel Master Template", type=["xlsx", "xls"])
+            
             if uploaded_import_file is not None:
                 if st.button("🚀 Process Smart Import & Update Database", type="primary"):
                     try:
                         excel_file_obj = pd.ExcelFile(uploaded_import_file)
                         conn = get_db_connection()
                         cursor = conn.cursor()
+                        
                         import_summary_log = []
                         
                         pk_mapping = {
-                            "users": "username", "holidays": "holiday_date", "trips": "trip",
-                            "overtime_requests": "id", "meeting_rooms": "room_number", "room_bookings": "id",
-                            "cars": "car_name", "fleet_drivers": "driver_name", "transit_groups": "group_name",
-                            "transit_passengers": "id", "daily_transit": "id", "site_news": "id"
+                            "users": "username",
+                            "holidays": "holiday_date",
+                            "trips": "trip",
+                            "overtime_requests": "id",
+                            "meeting_rooms": "room_number",
+                            "room_bookings": "id",
+                            "cars": "car_name",
+                            "fleet_drivers": "driver_name",
+                            "transit_groups": "group_name",
+                            "transit_passengers": "id",
+                            "daily_transit": "id",
+                            "site_news": "id"
                         }
                         
                         for sheet_name in excel_file_obj.sheet_names:
@@ -1392,15 +1715,21 @@ elif nav_selection == "🛠️ System Administration":
                                 df_sheet = pd.read_excel(excel_file_obj, sheet_name=sheet_name)
                                 if df_sheet.empty:
                                     continue
+                                    
                                 pk_col = pk_mapping.get(sheet_name)
+                                updated_count = 0
                                 inserted_count = 0
+                                
                                 for _, row in df_sheet.iterrows():
                                     clean_row = row.dropna()
                                     if clean_row.empty:
                                         continue
+                                        
                                     cols = list(clean_row.index)
                                     vals = list(clean_row.values)
-                                    insert_cols, insert_vals = cols, vals
+                                    
+                                    insert_cols = cols
+                                    insert_vals = vals
                                     if pk_col in cols and sheet_name in ["overtime_requests", "room_bookings", "transit_passengers", "daily_transit", "site_news"]:
                                         if pd.isna(clean_row[pk_col]) or str(clean_row[pk_col]).strip() == "":
                                             insert_cols = [c for c in cols if c != pk_col]
@@ -1420,11 +1749,14 @@ elif nav_selection == "🛠️ System Administration":
                                         
                                     cursor.execute(sql, insert_vals)
                                     inserted_count += 1
+                                    
                                 import_summary_log.append(f"Table **{sheet_name}**: Processed {inserted_count} records")
                                 
                         conn.commit()
                         conn.close()
-                        set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n" + "\n".join(import_summary_log), "success")
+                        
+                        summary_msg = "\n".join(import_summary_log)
+                        set_transaction_dialog("Smart Import Successful", f"Database updated successfully!\n\n{summary_msg}", "success")
                     except Exception as e:
                         set_transaction_dialog("Import Failed", f"Error during import processing: {str(e)}", "error")
                     st.rerun()
@@ -1436,7 +1768,10 @@ elif nav_selection == "🛠️ System Administration":
                 ["users", "cars", "fleet_drivers", "transit_groups", "transit_passengers", "meeting_rooms", "holidays", "trips"]
             )
             
-            master_df = load_data_query(f"SELECT * FROM {selected_master_table}")
+            conn = get_db_connection()
+            master_df = pd.read_sql_query(f"SELECT * FROM {selected_master_table}", conn)
+            conn.close()
+            
             st.dataframe(master_df, use_container_width=True)
             st.download_button(
                 f"📥 Export {selected_master_table} to Excel (.xlsx)",
@@ -1444,3 +1779,86 @@ elif nav_selection == "🛠️ System Administration":
                 file_name=f"{selected_master_table}_{datetime.today().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+            st.markdown("---")
+            st.subheader(f"Manage Records (Grid Editor): `{selected_master_table}`")
+            st.markdown("Edit cells directly, add new rows at the bottom, or select rows to delete. Click **Save Changes to Database** when done.")
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT kcu.column_name 
+                FROM information_schema.table_constraints tc 
+                JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name 
+                WHERE tc.table_name = %s AND tc.constraint_type = 'PRIMARY KEY'
+            """, (selected_master_table,))
+            pk_rows = cursor.fetchall()
+            pk_cols = [row[0] for row in pk_rows]
+            if not pk_cols:
+                pk_cols = [master_df.columns[0] if not master_df.empty else '']
+            pk_col = pk_cols[0] if pk_cols else None
+            conn.close()
+
+            edited_df = st.data_editor(
+                master_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"grid_editor_{selected_master_table}"
+            )
+
+            if st.button("💾 Save Changes to Database", type="primary", key=f"save_grid_{selected_master_table}"):
+                try:
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    
+                    if pk_col and pk_col in edited_df.columns and pk_col in master_df.columns:
+                        original_keys = set(master_df[pk_col].dropna().astype(str))
+                        current_keys = set(edited_df[pk_col].dropna().astype(str))
+                        
+                        deleted_keys = original_keys - current_keys
+                        for d_key in deleted_keys:
+                            cursor.execute(f"DELETE FROM {selected_master_table} WHERE CAST({pk_col} AS TEXT) = %s", (d_key,))
+                            
+                        for _, row in edited_df.iterrows():
+                            clean_row = row.dropna()
+                            if clean_row.empty:
+                                continue
+                            cols = list(clean_row.index)
+                            p_val = str(row[pk_col]) if pk_col in row and pd.notna(row[pk_col]) else ""
+                            
+                            if p_val and p_val in original_keys:
+                                set_cols = [c for c in cols if c != pk_col]
+                                set_clause = ", ".join([f"{c} = %s" for c in set_cols])
+                                update_vals = [row[c] for c in set_cols] + [row[pk_col]]
+                                if set_clause:
+                                    cursor.execute(f"UPDATE {selected_master_table} SET {set_clause} WHERE {pk_col} = %s", update_vals)
+                            else:
+                                insert_cols = [c for c in cols if not (pk_col and c == pk_col and (pd.isna(row[c]) or str(row[c]).strip() == ""))]
+                                insert_vals = [row[c] for c in insert_cols]
+                                placeholders = ", ".join(["%s"] * len(insert_cols))
+                                col_names_str = ", ".join(insert_cols)
+                                if insert_cols:
+                                    if pk_col and pk_col in insert_cols:
+                                        update_set_clause = ", ".join([f"{c} = EXCLUDED.{c}" for c in insert_cols if c != pk_col])
+                                        sql = f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders}) ON CONFLICT ({pk_col}) DO UPDATE SET {update_set_clause}"
+                                    else:
+                                        sql = f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})"
+                                    cursor.execute(sql, insert_vals)
+                    else:
+                        cursor.execute(f"DELETE FROM {selected_master_table}")
+                        for _, row in edited_df.iterrows():
+                            clean_row = row.dropna()
+                            if clean_row.empty:
+                                continue
+                            cols = list(clean_row.index)
+                            vals = list(clean_row.values)
+                            placeholders = ", ".join(["%s"] * len(cols))
+                            col_names_str = ", ".join(cols)
+                            cursor.execute(f"INSERT INTO {selected_master_table} ({col_names_str}) VALUES ({placeholders})", vals)
+                            
+                    conn.commit()
+                    conn.close()
+                    set_transaction_dialog("Save Successful", f"Master table `{selected_master_table}` updated successfully.", "success")
+                except Exception as e:
+                    set_transaction_dialog("Save Failed", f"Error: {str(e)}", "error")
+                st.rerun()
