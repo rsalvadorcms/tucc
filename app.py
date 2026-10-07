@@ -47,7 +47,7 @@ def get_db_connection():
         conn = psycopg2.connect(**st.secrets["postgres"], cursor_factory=psycopg2.extras.DictCursor)
     else:
         conn = psycopg2.connect(
-            dbname=os.environ.get("PG_DATABASE", "office_operations"),
+            dbname=os.environ.get("PG_DATABASE", "postgres"),
             user=os.environ.get("PG_USER", "postgres"),
             password=os.environ.get("PG_PASSWORD", "password"),
             host=os.environ.get("PG_HOST", "localhost"),
